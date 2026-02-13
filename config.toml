@@ -48,6 +48,15 @@ encryption = false
 # 부팅 시 자동 로그인 (true/false)
 autologin = true
 
+# 디스크 설정
+[disk]
+# 스왑 공간 선택:
+# swap = "none"       # 스왑 없음
+# swap = "small"      # 작은 스왑 (RAM 크기의 절반, 가벼운 사용)
+# swap = "suspend"    # 최대 절전용 스왑 (RAM과 같은 크기)
+# swap = "file"       # 스왑 파일 (파티션 대신 파일 사용)
+swap = "small"
+
 # 데스크톱 환경
 [packages.desktop]
 kde = true                       # KDE Plasma 데스크톱

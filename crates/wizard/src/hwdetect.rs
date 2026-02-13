@@ -1,23 +1,50 @@
+use std::fmt;
 use std::fs;
 use std::path::Path;
 
 /// Detected GPU vendor.
-#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuVendor {
-    Nvidia = 0,
-    Amd = 1,
-    Intel = 2,
-    Unknown = 3,
+    Nvidia,
+    Amd,
+    Intel,
+    Unknown,
+}
+
+impl GpuVendor {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Nvidia => "NVIDIA",
+            Self::Amd => "AMD",
+            Self::Intel => "Intel",
+            Self::Unknown => "Unknown",
+        }
+    }
+}
+
+impl fmt::Display for GpuVendor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
 }
 
 /// Detected audio backend.
-#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum AudioBackend {
-    Pipewire = 0,
-    PulseAudio = 1,
-    None = 2,
+    Pipewire,
+    PulseAudio,
+    None,
+}
+
+impl AudioBackend {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Pipewire => "Pipewire",
+            Self::PulseAudio => "PulseAudio",
+            Self::None => "None",
+        }
+    }
 }
 
 /// Detect primary GPU vendor by scanning /sys/class/drm/card*/device/vendor.
@@ -85,7 +112,6 @@ pub fn gpu_driver_packages(vendor: GpuVendor) -> Vec<&'static str> {
 /// Check if audio hardware is present via /proc/asound.
 pub fn detect_audio() -> AudioBackend {
     if Path::new("/proc/asound/cards").exists() {
-        // Default to pipewire on modern systems
         AudioBackend::Pipewire
     } else {
         AudioBackend::None
@@ -106,7 +132,6 @@ pub fn total_ram_mb() -> u64 {
 
     for line in meminfo.lines() {
         if line.starts_with("MemTotal:") {
-            // Format: "MemTotal:       16384000 kB"
             let parts: Vec<&str> = line.split_whitespace().collect();
             if let Some(kb_str) = parts.get(1) {
                 if let Ok(kb) = kb_str.parse::<u64>() {

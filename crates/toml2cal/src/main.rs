@@ -126,14 +126,16 @@ fn cmd_apply_packages(input: &Path) -> Result<()> {
 
     eprintln!("Installing {} packages: {}", pkgs.len(), pkgs.join(" "));
 
-    let status = std::process::Command::new("pacman")
+    // Use yay if available (handles AUR), fall back to pacman
+    let pkg_mgr = if has_cmd("yay") { "yay" } else { "pacman" };
+    let status = std::process::Command::new(pkg_mgr)
         .args(["-S", "--noconfirm", "--needed"])
         .args(&pkgs)
         .status()
-        .context("Failed to run pacman")?;
+        .with_context(|| format!("Failed to run {}", pkg_mgr))?;
 
     if !status.success() {
-        anyhow::bail!("pacman exited with status {}", status);
+        anyhow::bail!("{} exited with status {}", pkg_mgr, status);
     }
     Ok(())
 }
@@ -147,7 +149,7 @@ fn cmd_apply_input_method(input: &Path) -> Result<()> {
     }
 
     let im_pkgs = match config.input_method.engine.as_str() {
-        "kime" => vec!["kime", "kime-indicator"],
+        "kime" => vec!["kime"],
         "fcitx5" => vec!["fcitx5", "fcitx5-hangul", "fcitx5-gtk", "fcitx5-qt", "fcitx5-configtool"],
         "ibus" => vec!["ibus", "ibus-hangul"],
         other => {
@@ -157,11 +159,12 @@ fn cmd_apply_input_method(input: &Path) -> Result<()> {
 
     eprintln!("Installing input method ({}): {}", config.input_method.engine, im_pkgs.join(" "));
 
-    let status = std::process::Command::new("pacman")
+    let pkg_mgr = if has_cmd("yay") { "yay" } else { "pacman" };
+    let status = std::process::Command::new(pkg_mgr)
         .args(["-S", "--noconfirm", "--needed"])
         .args(&im_pkgs)
         .status()
-        .context("Failed to run pacman")?;
+        .with_context(|| format!("Failed to run {}", pkg_mgr))?;
 
     if !status.success() {
         anyhow::bail!("pacman exited with status {}", status);
@@ -182,4 +185,14 @@ fn cmd_apply_input_method(input: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn has_cmd(cmd: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(cmd)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }

@@ -1,0 +1,257 @@
+#!/bin/bash
+# blunux-setup — Set up blunux2 from config.toml
+#
+# Curl usage (fresh Arch install):
+#   curl -sL https://raw.githubusercontent.com/nidoit/blunux2SB/main/scripts/blunux-setup | bash
+#
+# With custom config.toml:
+#   curl -sL https://raw.githubusercontent.com/nidoit/blunux2SB/main/scripts/blunux-setup | bash -s -- /path/to/config.toml
+#
+# On the live ISO (called by startblunux):
+#   blunux-setup --live /usr/share/blunux/config.toml
+#
+# If the compiled binary (blunux-setup-bin) is available, this script
+# delegates to it. Otherwise it handles everything in pure bash.
+
+set -euo pipefail
+
+# ── Colours ─────────────────────────────────────────────────────────────────
+GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; NC='\033[0m'
+ok()   { echo -e "${GREEN}[OK]${NC} $*"; }
+warn() { echo -e "${YELLOW}[!!]${NC} $*"; }
+die()  { echo -e "${RED}[ERR]${NC} $*" >&2; exit 1; }
+
+# ── Arguments ───────────────────────────────────────────────────────────────
+LIVE=false
+CONFIG=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --live) LIVE=true ;;
+        *)      CONFIG="$arg" ;;
+    esac
+done
+
+# Find config.toml
+if [[ -z "$CONFIG" ]]; then
+    if [[ -f "/usr/share/blunux/config.toml" ]]; then
+        CONFIG="/usr/share/blunux/config.toml"
+    elif [[ -f "./config.toml" ]]; then
+        CONFIG="./config.toml"
+    else
+        die "config.toml not found. Usage: blunux-setup [--live] [config.toml]"
+    fi
+fi
+
+[[ -f "$CONFIG" ]] || die "File not found: $CONFIG"
+echo "blunux-setup: $CONFIG"
+
+# ── Try compiled binary first ───────────────────────────────────────────────
+if command -v blunux-setup-bin &>/dev/null; then
+    echo "Found compiled binary, delegating..."
+    ARGS=("--config" "$CONFIG")
+    $LIVE && ARGS+=("--live")
+    exec blunux-setup-bin "${ARGS[@]}"
+fi
+
+# ── TOML parser (simple key=value, unique keys) ────────────────────────────
+toml_get() {
+    grep "^$1 *=" "$CONFIG" 2>/dev/null | head -1 | sed 's/^[^=]*= *//' | tr -d '"'
+}
+toml_bool() {
+    [[ "$(toml_get "$1")" == "true" ]]
+}
+
+# ── Sanity checks ──────────────────────────────────────────────────────────
+[[ $EUID -ne 0 ]] || die "Do not run as root (yay needs a regular user with sudo)"
+command -v pacman &>/dev/null || die "pacman not found — this script is for Arch Linux"
+
+# ── 1. Install yay ─────────────────────────────────────────────────────────
+if ! command -v yay &>/dev/null; then
+    echo "── Installing yay ──"
+    sudo pacman -S --noconfirm --needed base-devel git
+    TMP=$(mktemp -d)
+    git clone https://aur.archlinux.org/yay-bin.git "$TMP"
+    (cd "$TMP" && makepkg -si --noconfirm)
+    rm -rf "$TMP"
+    ok "yay installed"
+else
+    ok "yay found"
+fi
+
+# ── 2. Calamares (live mode) ───────────────────────────────────────────────
+if $LIVE; then
+    echo "── Installing Calamares (live ISO) ──"
+    yay -S --noconfirm --needed calamares calamares-extensions
+    ok "calamares"
+fi
+
+# ── 3. Packages from config.toml ──────────────────────────────────────────
+PKGS=()
+
+# Desktop
+toml_bool "kde" && PKGS+=(
+    plasma-desktop plasma-workspace sddm
+    konsole dolphin kate ark spectacle xdg-desktop-portal-kde
+)
+
+# Browsers
+toml_bool "firefox" && PKGS+=(firefox)
+toml_bool "whale"   && PKGS+=(naver-whale-bin)
+toml_bool "chrome"  && PKGS+=(google-chrome)
+toml_bool "mullvad" && PKGS+=(mullvad-browser-bin)
+
+# Office
+toml_bool "libreoffice" && PKGS+=(libreoffice-fresh)
+toml_bool "hoffice"     && PKGS+=(hoffice-bin)
+toml_bool "texlive"     && PKGS+=(texlive-core texlive-latexextra)
+
+# Development
+toml_bool "vscode"     && PKGS+=(visual-studio-code-bin)
+toml_bool "sublime"    && PKGS+=(sublime-text-4)
+toml_bool "rust"       && PKGS+=(rustup)
+toml_bool "julia"      && PKGS+=(julia)
+toml_bool "nodejs"     && PKGS+=(nodejs npm)
+toml_bool "github_cli" && PKGS+=(github-cli)
+
+# Multimedia
+toml_bool "obs"      && PKGS+=(obs-studio)
+toml_bool "vlc"      && PKGS+=(vlc)
+toml_bool "freetv"   && PKGS+=(freetuxtv)
+toml_bool "ytdlp"    && PKGS+=(yt-dlp)
+toml_bool "freetube" && PKGS+=(freetube-bin)
+
+# Gaming
+toml_bool "steam"  && PKGS+=(steam lib32-mesa lib32-vulkan-radeon)
+toml_bool "unciv"  && PKGS+=(unciv-bin)
+toml_bool "snes9x" && PKGS+=(snes9x-gtk)
+
+# Virtualization
+toml_bool "virtualbox" && PKGS+=(virtualbox virtualbox-host-dkms)
+toml_bool "docker"     && PKGS+=(docker docker-compose)
+
+# Communication
+toml_bool "teams"    && PKGS+=(teams-for-linux-bin)
+toml_bool "whatsapp" && PKGS+=(whatsapp-for-linux)
+toml_bool "onenote"  && PKGS+=(p3x-onenote-bin)
+
+# Utility
+toml_bool "conky"     && PKGS+=(conky)
+toml_bool "vnc"       && PKGS+=(tigervnc)
+toml_bool "samba"     && PKGS+=(samba smbclient)
+toml_bool "bluetooth" && PKGS+=(bluez bluez-utils bluedevil)
+
+# Fonts
+PKGS+=(noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-liberation)
+
+if [[ ${#PKGS[@]} -gt 0 ]]; then
+    echo "── Installing ${#PKGS[@]} packages ──"
+    yay -S --noconfirm --needed "${PKGS[@]}"
+    ok "packages"
+fi
+
+# ── 4. Input method ───────────────────────────────────────────────────────
+ENGINE=$(toml_get "engine")
+if [[ "$(toml_get "enabled")" == "true" ]]; then
+    echo "── Configuring input method: $ENGINE ──"
+
+    case "$ENGINE" in
+        kime)
+            yay -S --noconfirm --needed kime
+
+            # kime config
+            KIME_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/kime"
+            mkdir -p "$KIME_DIR"
+            cat > "$KIME_DIR/config.yaml" << 'KIMEEOF'
+daemon:
+  modules:
+    - Xim
+    - Wayland
+    - Indicator
+
+indicator:
+  icon_color: Black
+
+engine:
+  hangul:
+    layout: dubeolsik
+    global_hotkeys:
+    - keys: [Hangul]
+      behavior: ToggleInputMethod
+    - keys: [AltR]
+      behavior: ToggleInputMethod
+    - keys: [Muhenkan]
+      behavior: ToggleInputMethod
+  mode:
+    hanja_keys: [F9, Hangul_Hanja]
+KIMEEOF
+            ok "kime config.yaml"
+
+            # Autostart
+            AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+            mkdir -p "$AUTOSTART"
+            cat > "$AUTOSTART/kime.desktop" << 'EOF'
+[Desktop Entry]
+Name=Kime
+Exec=kime
+Type=Application
+X-GNOME-Autostart-enabled=true
+EOF
+            ok "kime autostart"
+            IM_MODULE="kime"
+            ;;
+        fcitx5)
+            yay -S --noconfirm --needed fcitx5 fcitx5-hangul fcitx5-gtk fcitx5-qt fcitx5-configtool
+            IM_MODULE="fcitx"
+            ;;
+        ibus)
+            yay -S --noconfirm --needed ibus ibus-hangul
+            IM_MODULE="ibus"
+            ;;
+        *)
+            warn "Unknown input method: $ENGINE"
+            IM_MODULE=""
+            ;;
+    esac
+
+    # Environment variables
+    if [[ -n "${IM_MODULE:-}" ]]; then
+        # System-wide (systemd)
+        sudo mkdir -p /etc/environment.d
+        echo -e "GTK_IM_MODULE=$IM_MODULE\nQT_IM_MODULE=$IM_MODULE\nXMODIFIERS=@im=$IM_MODULE" \
+            | sudo tee /etc/environment.d/input-method.conf > /dev/null
+        ok "/etc/environment.d/input-method.conf"
+
+        # User profiles (Xorg)
+        IM_BLOCK="
+# Input method
+export GTK_IM_MODULE=$IM_MODULE
+export QT_IM_MODULE=$IM_MODULE
+export XMODIFIERS=@im=$IM_MODULE"
+
+        for f in "$HOME/.bash_profile" "$HOME/.xprofile"; do
+            if ! grep -q "GTK_IM_MODULE" "$f" 2>/dev/null; then
+                echo "$IM_BLOCK" >> "$f"
+                ok "Updated $(basename "$f")"
+            fi
+        done
+    fi
+fi
+
+# ── 5. Enable services ────────────────────────────────────────────────────
+echo "── Enabling services ──"
+SERVICES=(NetworkManager)
+toml_bool "kde"       && SERVICES+=(sddm)
+toml_bool "bluetooth" && SERVICES+=(bluetooth)
+toml_bool "docker"    && SERVICES+=(docker)
+
+for svc in "${SERVICES[@]}"; do
+    if sudo systemctl enable "$svc" 2>/dev/null; then
+        ok "$svc"
+    else
+        warn "Could not enable $svc"
+    fi
+done
+
+echo ""
+ok "blunux-setup complete"

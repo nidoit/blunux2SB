@@ -1,0 +1,44 @@
+#!/bin/bash
+# /usr/bin/calamares-blunux — blunux2 Installer Wrapper
+#
+# This script:
+#   1. Reads config.toml (user's install configuration)
+#   2. Runs blunux-toml2cal (Rust) to generate Calamares YAML configs
+#   3. Launches Calamares with the generated configs
+#
+# The user never edits Calamares YAML — config.toml is the single source of truth.
+
+set -euo pipefail
+
+BLUNUX_SHARE="/usr/share/blunux"
+CONFIG_FILE="${BLUNUX_SHARE}/config.toml"
+CAL_MODULES="/etc/calamares/modules"
+CAL_SETTINGS="/etc/calamares/settings.conf"
+
+echo "blunux2 Installer: Starting..."
+
+# Verify config.toml exists
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+    echo "ERROR: config.toml not found at ${CONFIG_FILE}"
+    echo "Cannot proceed without configuration."
+    exit 1
+fi
+
+# Verify the translator binary exists
+if ! command -v blunux-toml2cal &>/dev/null; then
+    echo "ERROR: blunux-toml2cal not found in PATH"
+    exit 1
+fi
+
+# Step 1: Translate config.toml → Calamares YAML
+echo "Translating config.toml → Calamares YAML..."
+blunux-toml2cal generate \
+    --input "${CONFIG_FILE}" \
+    --output-dir "${CAL_MODULES}" \
+    --settings "${CAL_SETTINGS}"
+
+echo "Calamares configs generated successfully."
+
+# Step 2: Launch Calamares
+echo "Launching Calamares installer..."
+exec calamares

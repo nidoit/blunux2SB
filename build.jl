@@ -47,6 +47,9 @@ function generate_packages(cfg::Dict)
     append!(pkgs, [
         "base", "linux", "linux-firmware", "linux-headers",
         "mkinitcpio", "mkinitcpio-archiso",
+        "mkinitcpio-nfs-utils",  # ipconfig + nfsmount for PXE hooks
+        "nbd",                   # nbd-client for archiso_pxe_nbd hook
+        "pv",                    # progress viewer for copy-to-RAM
     ])
 
     # Kernel override

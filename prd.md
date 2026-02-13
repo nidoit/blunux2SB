@@ -427,13 +427,16 @@ julia /usr/share/blunux/livecd/main.jl
 # main.jl internally:
 #   1. Calls Rust hw-detect functions via ccall → libblunux.so
 #   2. Launches GTK4 wizard UI (Rust/gtk4-rs)
-#   3. Collects user selections:
+#   3. Auto-detects GPU and selects drivers (NVIDIA→proprietary, AMD/Intel→mesa)
+#   4. Collects user selections:
 #      - Language, keyboard layout
-#      - Desktop theme/layout (macOS-like, Windows-like, Classic)
-#      - Driver preference (proprietary vs open-source)
-#   4. Writes selections to config.toml
-#   5. Calls Rust config-apply functions to set live session configs
-#   6. Execs startplasma-wayland (or startplasma-x11)
+#      - Swap preference (none / small / suspend / file)
+#   5. Writes selections to config.toml
+#   6. Calls Rust config-apply functions to set live session configs
+#   7. Execs startplasma-wayland (or startplasma-x11)
+#
+# Theme: single curated blunux2 theme, no user selection.
+# Drivers: auto-detected by Rust hw-detect, no user selection.
 ```
 
 **Key design principle:** All wizard selections are written to `config.toml`. When the user clicks "Install", the Rust-based translator (`blunux-toml2cal`) reads `config.toml` and generates the full set of Calamares YAML configuration files automatically. The user never touches Calamares config directly — `config.toml` is the single source of truth.
@@ -458,12 +461,20 @@ hostname = "nux"
 username = "blu"
 encryption = false
 
+[disk]
+swap = "small"          # none / small / suspend / file
+
 [packages.desktop]
 kde = true
 
 [packages.browser]
 firefox = true
 ```
+
+**Design decisions:**
+- **Theme** — Single curated blunux2 theme ships by default. No theme selection in the wizard or config.toml.
+- **Drivers** — Auto-detected at boot by Rust hw-detect (NVIDIA → proprietary, AMD/Intel → mesa). No user selection needed.
+- **Filesystem** — btrfs with subvolumes is the only supported layout (hardcoded in the translator).
 
 When the user is satisfied with their configuration (either via the GUI wizard or by editing `config.toml` directly), the installation proceeds as follows:
 
@@ -495,6 +506,7 @@ The Rust translator (`blunux-toml2cal`) maps TOML sections to Calamares module c
 | `[install]` bootloader | bootloader | `bootloader.conf` |
 | `[install]` hostname/username | users | `users.conf` |
 | `[install]` encryption | partition | `partition.conf` (LUKS settings) |
+| `[disk]` swap | partition | `partition.conf` (swap choice) |
 | `[kernel]` | shellprocess | kernel install commands |
 | `[packages.*]` | shellprocess | post-install package list |
 | `[input_method]` | shellprocess | input method setup commands |

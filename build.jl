@@ -164,6 +164,15 @@ function generate_airootfs(cfg::Dict)
     locale = get(cfg, "locale", Dict())
     install = get(cfg, "install", Dict())
 
+    # Create required directories
+    for dir in [
+        "airootfs/etc/mkinitcpio.conf.d",
+        "airootfs/usr/share/blunux",
+        "airootfs/usr/bin",
+    ]
+        mkpath(joinpath(PROFILE, dir))
+    end
+
     # hostname
     write(joinpath(PROFILE, "airootfs/etc/hostname"), get(install, "hostname", "blunux") * "\n")
 

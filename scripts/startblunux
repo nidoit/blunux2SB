@@ -1,10 +1,11 @@
 #!/bin/bash
 # /usr/bin/startblunux — blunux2 Live Session Entry Point
 #
-# Called by SDDM auto-login or manually. Launches the Rust wizard binary
-# which handles hardware detection, config loading, and desktop launch.
+# Called by SDDM auto-login or manually. Flow:
+#   1. blunux-wizard   — hardware detection, locale, keyboard (Rust)
+#   2. blunux-setup    — install AUR packages (calamares, kime, etc.) (Rust)
+#   3. startplasma     — launch desktop
 #
-# Stack: Bash (this script) → Rust (blunux-wizard) → C (fallback)
 # No Python or Julia.
 
 set -euo pipefail
@@ -12,23 +13,32 @@ set -euo pipefail
 CONFIG_FILE="/usr/share/blunux/config.toml"
 
 # Log to journald
-exec > >(systemd-cat -t blunux-wizard) 2>&1
+exec > >(systemd-cat -t blunux-live) 2>&1
 
-echo "blunux2: Starting setup wizard..."
-echo "blunux2: Config file: ${CONFIG_FILE}"
+echo "blunux2: Starting live session setup..."
+echo "blunux2: Config: ${CONFIG_FILE}"
 
-# Verify the wizard binary exists
-if ! command -v blunux-wizard &>/dev/null; then
-    echo "ERROR: blunux-wizard not found in PATH"
-    echo "Falling back to direct desktop launch..."
-    exec startplasma-wayland
+# ── Step 1: Hardware detection + locale ─────────────────────────────────────
+if command -v blunux-wizard &>/dev/null; then
+    echo "blunux2: Running hardware wizard..."
+    # wizard detects GPU, applies locale/keyboard, but does NOT exec desktop
+    # (we need to run blunux-setup first)
+    blunux-wizard --no-desktop || echo "WARNING: wizard returned non-zero"
+else
+    echo "WARNING: blunux-wizard not found, skipping hardware detection"
 fi
 
-# Launch Rust wizard binary directly.
-# It detects hardware, loads config.toml, applies settings,
-# then exec's startplasma-wayland (replacing this process tree).
-blunux-wizard
+# ── Step 2: Install AUR packages (calamares, input method, etc.) ────────────
+if command -v blunux-setup &>/dev/null; then
+    echo "blunux2: Running setup (AUR packages)..."
+    blunux-setup --live --config "${CONFIG_FILE}" || echo "WARNING: blunux-setup returned non-zero"
+elif [[ -x /usr/bin/blunux-setup ]]; then
+    echo "blunux2: Running setup script..."
+    /usr/bin/blunux-setup --live "${CONFIG_FILE}" || echo "WARNING: blunux-setup returned non-zero"
+else
+    echo "WARNING: blunux-setup not found, skipping AUR package installation"
+fi
 
-# If wizard exits without exec-ing the desktop (error case), launch directly
-echo "WARNING: Wizard exited without launching desktop. Starting Plasma directly..."
+# ── Step 3: Launch desktop ──────────────────────────────────────────────────
+echo "blunux2: Launching Plasma Wayland..."
 exec startplasma-wayland

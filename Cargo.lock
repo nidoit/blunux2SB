@@ -67,6 +67,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "blunux-setup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blunux-config",
+ "clap",
+]
+
+[[package]]
 name = "blunux-toml2cal"
 version = "0.1.0"
 dependencies = [

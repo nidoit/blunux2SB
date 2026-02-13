@@ -3,5 +3,6 @@ members = [
     "crates/blunux-config",
     "crates/toml2cal",
     "crates/wizard",
+    "crates/setup",
 ]
 resolver = "2"

@@ -14,6 +14,8 @@ fn main() -> Result<()> {
     println!("╚══════════════════════════════════════╝");
     println!();
 
+    let no_desktop = std::env::args().any(|a| a == "--no-desktop");
+
     // 1. Hardware detection
     step_hardware_detect();
 
@@ -24,8 +26,12 @@ fn main() -> Result<()> {
     step_apply_locale(&config);
     step_apply_keyboard(&config);
 
-    // 4. Launch desktop session
-    step_launch_desktop();
+    // 4. Launch desktop session (unless --no-desktop)
+    if !no_desktop {
+        step_launch_desktop();
+    } else {
+        println!("\n── Skipping desktop launch (--no-desktop) ──");
+    }
 
     Ok(())
 }

@@ -47,6 +47,9 @@ function generate_packages(cfg::Dict)
     append!(pkgs, [
         "base", "linux", "linux-firmware", "linux-headers",
         "mkinitcpio", "mkinitcpio-archiso",
+        "mkinitcpio-nfs-utils",  # ipconfig + nfsmount for PXE hooks
+        "nbd",                   # nbd-client for archiso_pxe_nbd hook
+        "pv",                    # progress viewer for copy-to-RAM
     ])
 
     # Kernel override
@@ -136,11 +139,9 @@ function generate_packages(cfg::Dict)
         append!(pkgs, ["bluez", "bluez-utils", "bluedevil"])
     end
 
-    # Custom blunux2 packages (require custom repo)
-    append!(aur, [
-        "blunux2-settings", "blunux2-themes",
-        "blunux2-calamares-config",
-    ])
+    # Note: blunux2-settings, blunux2-themes, blunux2-calamares-config
+    # are not packaged yet. blunux-setup handles configuration at runtime
+    # via config.toml instead of distro packages.
 
     # Check if custom repo is enabled in pacman.conf
     pacman_conf = read(joinpath(PROFILE, "pacman.conf"), String)
@@ -232,7 +233,7 @@ function build_rust()
     target = joinpath(ROOT, "target/release")
     bindir = joinpath(PROFILE, "airootfs/usr/bin")
 
-    for bin in ["blunux-wizard", "blunux-toml2cal"]
+    for bin in ["blunux-wizard", "blunux-toml2cal", "blunux-setup"]
         src = joinpath(target, bin)
         dst = joinpath(bindir, bin)
         if isfile(src)

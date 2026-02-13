@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/blunux-config",
+    "crates/toml2cal",
+    "crates/libblunux",
+]
+resolver = "2"

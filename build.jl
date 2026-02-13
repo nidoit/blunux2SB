@@ -59,16 +59,9 @@ function generate_packages(cfg::Dict)
         push!(pkgs, "$(kernel)-headers")
     end
 
-    # Boot
-    bootloader = get(get(cfg, "install", Dict()), "bootloader", "grub")
-    append!(pkgs, ["efibootmgr"])
-    if bootloader == "grub"
-        append!(pkgs, ["grub", "syslinux"])
-    elseif bootloader == "systemd-boot"
-        push!(pkgs, "syslinux")
-    else  # nmbl (EFISTUB)
-        push!(pkgs, "syslinux")
-    end
+    # Boot — the live ISO always uses GRUB; the user's bootloader choice
+    # in config.toml only applies to the installed system.
+    append!(pkgs, ["efibootmgr", "grub", "syslinux"])
 
     # Filesystem
     append!(pkgs, ["dosfstools", "ntfs-3g", "e2fsprogs"])

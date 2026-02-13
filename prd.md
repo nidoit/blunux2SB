@@ -26,13 +26,16 @@ The system consists of four major subsystems:
 │ ISO Build│ Live Boot│ Setup     │ Disk Installation │
 │ System   │ System   │ Wizard    │ (Calamares)       │
 ├──────────┼──────────┼───────────┼───────────────────┤
-│ archiso/ │ GRUB/    │ Rust      │ config.toml →     │
-│ mkarchiso│ syslinux │ wizard    │ Calamares YAML    │
-│ profiles │ initramfs│ binary    │ (auto-translated) │
-│ CI/CD    │ squashfs │ C fallback│ btrfs default     │
-│ pipeline │ overlayfs│ GTK4 UI   │                   │
+│ Julia    │ GRUB/    │ Rust      │ config.toml →     │
+│ build.jl │ syslinux │ wizard    │ Calamares YAML    │
+│ (dev-side│ initramfs│ binary    │ (auto-translated) │
+│ only, not│ squashfs │ C fallback│ btrfs default     │
+│ in ISO)  │ overlayfs│           │                   │
 └──────────┴──────────┴───────────┴───────────────────┘
+     ↑ Developer machine               ↑ Inside the ISO
 ```
+
+**Key distinction:** Julia is used only on the **developer's machine** to orchestrate the ISO build process (`build.jl`). It is NOT shipped inside the ISO. The ISO contains only Rust binaries + C fallback.
 
 ---
 
@@ -208,22 +211,42 @@ blunux2-toml2cal         # config.toml → Calamares YAML translator (Rust)
 
 ### 3.4 Build Process
 
-#### Local Build
+The ISO build is orchestrated by **Julia** (`build.jl`) on the developer's machine. Julia reads `config.toml`, generates the archiso profile, builds the Rust binaries, and calls `mkarchiso`.
+
+#### Local Build (Julia orchestrator)
 
 ```bash
-# Install archiso
+# Prerequisites: archiso, Julia, Rust
 sudo pacman -S archiso
 
-# Copy profile
-cp -r /path/to/blunux2-profile ~/blunux2-build
+# Full build — config.toml → profile → Rust binaries → ISO
+julia build.jl
 
-# Build ISO
-sudo mkarchiso -v \
-    -w /tmp/blunux2-work \
-    -o ~/blunux2-out \
-    ~/blunux2-build/
+# Profile only (no ISO build, for inspection)
+julia build.jl --profile-only
 
-# Output: ~/blunux2-out/blunux2-YYYY.MM.DD-x86_64.iso
+# Skip Rust build (use existing binaries)
+julia build.jl --skip-rust
+
+# Output: out/blunux2-YYYY.MM.DD-x86_64.iso
+```
+
+#### What build.jl Does
+
+1. **Reads `config.toml`** — Parses user configuration
+2. **Generates `packages.x86_64`** — Maps config booleans to pacman package names
+3. **Generates airootfs overlay** — hostname, locale.conf, vconsole.conf, copies config.toml
+4. **Builds Rust binaries** — `cargo build --release` → copies `blunux-wizard` and `blunux-toml2cal` into airootfs
+5. **Calls `mkarchiso`** — Standard archiso ISO build from the generated profile
+
+#### Manual Build (without Julia)
+
+```bash
+# If you prefer not to use Julia, you can build manually:
+cargo build --release
+cp target/release/blunux-{wizard,toml2cal} profile/airootfs/usr/bin/
+cp scripts/{startblunux,calamares-blunux} profile/airootfs/usr/bin/
+sudo mkarchiso -v -w /tmp/blunux2-work -o out/ profile/
 ```
 
 #### What mkarchiso Does Internally
@@ -705,7 +728,9 @@ blunux2-2026.02.13-x86_64.iso
 | Config translator | Rust (`blunux-toml2cal`) | config.toml → Calamares YAML generation |
 | Low-level fallback | C/C++ | Kernel ioctls, legacy library FFI without Rust bindings |
 | UI toolkit | GTK4/Libadwaita (via gtk4-rs) | Modern UI, Rust-native bindings |
-| No Python/Julia | — | Entire stack is Rust + C; zero Python/Julia dependency |
+| ISO build orchestrator | Julia (`build.jl`) | Dev-side only — reads config.toml, generates archiso profile, calls mkarchiso |
+| No Python | — | Zero Python dependency (build-side or ISO-side) |
+| No Julia in ISO | — | Julia used only for build orchestration on developer machine |
 | Boot (UEFI) | GRUB | Widest hardware compatibility |
 | Boot (BIOS) | syslinux | Lightweight, reliable for legacy |
 | CI/CD | GitHub Actions | Free for open-source, matrix builds |

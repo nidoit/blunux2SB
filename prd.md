@@ -26,11 +26,11 @@ The system consists of four major subsystems:
 │ ISO Build│ Live Boot│ Setup     │ Disk Installation │
 │ System   │ System   │ Wizard    │ (Calamares)       │
 ├──────────┼──────────┼───────────┼───────────────────┤
-│ archiso/ │ GRUB/    │ GTK4/     │ Calamares with    │
-│ mkarchiso│ syslinux │ Libadwaita│ custom modules    │
-│ profiles │ initramfs│ Python app│ and btrfs default │
-│ CI/CD    │ squashfs │           │                   │
-│ pipeline │ overlayfs│           │                   │
+│ archiso/ │ GRUB/    │ Julia     │ config.toml →     │
+│ mkarchiso│ syslinux │ orchestr. │ Calamares YAML    │
+│ profiles │ initramfs│ Rust core │ (auto-translated) │
+│ CI/CD    │ squashfs │ C fallback│ btrfs default     │
+│ pipeline │ overlayfs│ GTK4 UI   │                   │
 └──────────┴──────────┴───────────┴───────────────────┘
 ```
 
@@ -64,12 +64,16 @@ blunux2-profile/
 │   ├── root/                  # Root user home in live session
 │   └── usr/
 │       ├── bin/
-│       │   ├── startblunux    # Main live session entry point
-│       │   └── calamares-blunux  # Installer wrapper script
+│       │   ├── startblunux          # Main live session entry point
+│       │   ├── calamares-blunux     # Installer wrapper script
+│       │   └── blunux-toml2cal      # config.toml → Calamares translator (Rust)
 │       ├── share/blunux/
-│       │   ├── livecd/        # Setup wizard (Python/GTK4)
-│       │   └── calamares/     # Installer UI source
-│       └── lib/calamares/     # Custom Calamares modules
+│       │   ├── livecd/              # Setup wizard (Julia orchestration + Rust core)
+│       │   │   ├── main.jl          # Julia entry point / orchestrator
+│       │   │   └── libblunux.so     # Rust shared library (hw detect, config, UI)
+│       │   ├── calamares/           # Installer config templates
+│       │   └── config.toml          # User-facing install configuration
+│       └── lib/calamares/           # Custom Calamares modules
 ├── efiboot/                   # UEFI boot configuration
 │   └── loader/
 │       ├── loader.conf
@@ -113,6 +117,7 @@ file_permissions=(
     ["/etc/shadow"]="0:0:400"
     ["/usr/bin/startblunux"]="0:0:755"
     ["/usr/bin/calamares-blunux"]="0:0:755"
+    ["/usr/bin/blunux-toml2cal"]="0:0:755"
 )
 ```
 
@@ -177,6 +182,14 @@ ttf-liberation
 calamares
 calamares-extensions
 
+# ── Build Toolchain (Julia + Rust + C) ──
+julia                    # Orchestration language
+rust                     # Core implementation (hw detect, config, UI)
+gcc                      # C compiler for low-level fallback code
+cmake                    # Build system for C components
+gtk4                     # GTK4 UI library (used via Rust gtk4-rs)
+libadwaita               # Libadwaita for modern GNOME-style widgets
+
 # ── Essential Apps ──
 firefox
 libreoffice-fresh
@@ -189,9 +202,10 @@ base-devel
 # ── blunux2 Custom ──
 # (from custom repo or AUR)
 blunux2-settings
-blunux2-livecd
+blunux2-livecd           # Setup wizard (Julia + Rust + C, no Python)
 blunux2-themes
 blunux2-calamares-config
+blunux2-toml2cal         # config.toml → Calamares YAML translator (Rust)
 ```
 
 ### 3.4 Build Process
@@ -381,36 +395,111 @@ Once the overlayfs root is assembled and `switch_root` is called:
 
 ### 4.5 Setup Wizard (First-Run Experience)
 
-A GTK4/Libadwaita Python application that runs before the desktop is fully ready:
+The setup wizard uses a **Julia + Rust + C** stack — no Python anywhere in the pipeline:
 
-```python
+- **Julia** — Top-level orchestration, workflow sequencing, calling into Rust libraries
+- **Rust** — Core logic: hardware detection, config parsing/generation, GTK4 UI, TOML→Calamares translation
+- **C/C++** — Only used where Rust cannot go (e.g., direct kernel ioctls, legacy library FFI that lacks Rust bindings)
+
+#### Language Responsibility Breakdown
+
+| Layer | Language | Responsibility |
+|-------|----------|---------------|
+| Orchestrator | Julia | Sequence wizard steps, call Rust via `ccall`, coordinate config flow |
+| Core library | Rust (`libblunux.so`) | Hardware detection, GTK4/Libadwaita UI, TOML parsing, Calamares YAML generation |
+| Low-level fallback | C | Kernel-level hardware probing where no Rust crate exists (e.g., custom ioctl wrappers) |
+
+#### Wizard Flow
+
+```bash
 # /usr/bin/startblunux (simplified)
 #!/bin/bash
 
-# Detect hardware
-detect_gpu_vendor()      # NVIDIA/AMD/Intel
-detect_audio_hardware()  # Enable JamesDSP if applicable
-detect_display_icc()     # Load ICC profiles
+# Julia orchestrates the entire wizard.
+# Rust library (libblunux.so) handles:
+#   - GPU/audio/display hardware detection
+#   - GTK4/Libadwaita UI rendering
+#   - config.toml reading and writing
+# C fallback used only for low-level hw probing without Rust bindings.
 
-# Launch wizard
-python3 /usr/share/blunux/livecd/main.py
+julia /usr/share/blunux/livecd/main.jl
 
-# Wizard collects:
-# 1. Language selection
-# 2. Keyboard layout
-# 3. Desktop theme/layout choice (e.g., macOS-like, Windows-like, Classic)
-# 4. Driver preference (proprietary vs open-source)
-
-# Apply selections to live session
-apply_locale "$SELECTED_LANG"
-apply_keyboard "$SELECTED_KB"
-apply_theme "$SELECTED_THEME"
-
-# Launch desktop session
-exec startplasma-wayland  # or startplasma-x11
+# main.jl internally:
+#   1. Calls Rust hw-detect functions via ccall → libblunux.so
+#   2. Launches GTK4 wizard UI (Rust/gtk4-rs)
+#   3. Collects user selections:
+#      - Language, keyboard layout
+#      - Desktop theme/layout (macOS-like, Windows-like, Classic)
+#      - Driver preference (proprietary vs open-source)
+#   4. Writes selections to config.toml
+#   5. Calls Rust config-apply functions to set live session configs
+#   6. Execs startplasma-wayland (or startplasma-x11)
 ```
 
-**Key design principle:** All wizard selections are written to standard config files. These same files are later copied by the installer to the target system, so the user's live session customizations carry over to the installed system.
+**Key design principle:** All wizard selections are written to `config.toml`. When the user clicks "Install", the Rust-based translator (`blunux-toml2cal`) reads `config.toml` and generates the full set of Calamares YAML configuration files automatically. The user never touches Calamares config directly — `config.toml` is the single source of truth.
+
+### 4.6 config.toml — User-Facing Configuration
+
+The user interacts exclusively with `config.toml` for both the live session wizard and the disk installer. This file is designed to be human-readable and editable, using TOML syntax with Korean comments.
+
+```toml
+# Example: config.toml (abbreviated)
+[blunux]
+version = "2.0"
+
+[locale]
+language = ["ko_KR"]
+timezone = "Europe/Stockholm"
+keyboard = ["kr", "us"]
+
+[install]
+bootloader = "nmbl"
+hostname = "nux"
+username = "blu"
+encryption = false
+
+[packages.desktop]
+kde = true
+
+[packages.browser]
+firefox = true
+```
+
+When the user is satisfied with their configuration (either via the GUI wizard or by editing `config.toml` directly), the installation proceeds as follows:
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌───────────────────┐
+│ config.toml │────▶│ blunux-toml2cal   │────▶│ Calamares YAML    │
+│ (user edits)│     │ (Rust translator) │     │ settings.conf     │
+│             │     │                   │     │ partition.conf    │
+│             │     │                   │     │ unpackfs.conf     │
+│             │     │                   │     │ locale.conf       │
+│             │     │                   │     │ users.conf        │
+│             │     │                   │     │ bootloader.conf   │
+└─────────────┘     └──────────────────┘     └───────────────────┘
+                                                      │
+                                                      ▼
+                                              ┌───────────────────┐
+                                              │ Calamares runs     │
+                                              │ standard pipeline  │
+                                              └───────────────────┘
+```
+
+#### Translation Rules (config.toml → Calamares)
+
+The Rust translator (`blunux-toml2cal`) maps TOML sections to Calamares module configs:
+
+| config.toml section | Calamares module | Generated file |
+|---------------------|-----------------|----------------|
+| `[locale]` | locale, keyboard | `locale.conf`, `keyboard.conf` |
+| `[install]` bootloader | bootloader | `bootloader.conf` |
+| `[install]` hostname/username | users | `users.conf` |
+| `[install]` encryption | partition | `partition.conf` (LUKS settings) |
+| `[kernel]` | shellprocess | kernel install commands |
+| `[packages.*]` | shellprocess | post-install package list |
+| `[input_method]` | shellprocess | input method setup commands |
+
+This "click-to-install" approach means a user can configure everything in a single TOML file, click install, and the Rust translator handles the rest — no manual Calamares configuration needed.
 
 ---
 
@@ -419,6 +508,8 @@ exec startplasma-wayland  # or startplasma-x11
 ### 5.1 Calamares Overview
 
 **Calamares** is a universal Linux installer framework. It's modular — you configure which modules run and in what order.
+
+In blunux2, users never interact with Calamares configuration directly. Instead, all install preferences are stored in a single **`config.toml`** file. A Rust-based translator (`blunux-toml2cal`) converts this TOML into the full set of Calamares YAML configs at install time. This "click-to-install" approach means the user configures everything in one readable file, clicks install, and the system handles the rest.
 
 ### 5.2 Calamares Module Pipeline
 
@@ -517,27 +608,54 @@ swapChoices:
   - file       # Swap file instead of partition
 ```
 
-### 5.5 Post-Install Scripts (shellprocess)
+### 5.5 config.toml → Calamares Translation (Pre-Install)
+
+Before Calamares runs, the Rust translator reads the user's `config.toml` and generates all required Calamares YAML configs:
+
+```bash
+# Called by calamares-blunux wrapper script before launching Calamares
+blunux-toml2cal \
+    --input /usr/share/blunux/config.toml \
+    --output-dir /etc/calamares/modules/ \
+    --settings /etc/calamares/settings.conf
+```
+
+The translator is a statically-linked Rust binary (`blunux-toml2cal`) that:
+1. Parses `config.toml` using the `toml` crate
+2. Maps each TOML section to the corresponding Calamares module config
+3. Writes well-formed YAML files (using the `serde_yaml` crate)
+4. Generates `settings.conf` with the correct module pipeline sequence
+
+This means `config.toml` is the only file the user (or the wizard UI) needs to modify. Calamares receives fully-formed YAML and runs its standard pipeline.
+
+### 5.6 Post-Install Scripts (shellprocess)
 
 ```yaml
 # /etc/calamares/modules/shellprocess.conf
+# (auto-generated by blunux-toml2cal from config.toml)
 
 script:
   # Remove live-session packages
   - command: "chroot $ROOT pacman -Rns --noconfirm mkinitcpio-archiso"
-  
+
   # Regenerate initramfs for installed system
   - command: "chroot $ROOT mkinitcpio -P"
-  
+
   # Enable services
   - command: "chroot $ROOT systemctl enable sddm NetworkManager bluetooth"
-  
+
   # Copy live session theme to installed system
   - command: "cp /home/liveuser/.config/plasma* $ROOT/etc/skel/.config/"
-  
+
+  # Install packages selected in config.toml [packages.*] sections
+  - command: "chroot $ROOT blunux-toml2cal --apply-packages /usr/share/blunux/config.toml"
+
+  # Configure input method from config.toml [input_method]
+  - command: "chroot $ROOT blunux-toml2cal --apply-input-method /usr/share/blunux/config.toml"
+
   # Clean up
   - command: "chroot $ROOT pacman -Scc --noconfirm"
-  
+
   # Set default kernel parameters
   - command: >
       sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"/'
@@ -581,11 +699,16 @@ blunux2-2026.02.13-x86_64.iso
 | ISO tool | archiso + mkarchiso | Official, well-maintained, proven |
 | Compression | SquashFS + zstd | Best compression ratio for live media |
 | Root FS overlay | overlayfs (tmpfs upper) | Standard Linux overlay, volatile by design |
-| Installer | Calamares | Universal, modular, widely adopted |
+| Installer | Calamares (via config.toml) | Universal framework, driven by TOML→YAML translation |
+| Install config | config.toml → Calamares YAML | User edits TOML; Rust translator generates Calamares configs |
 | Default FS | btrfs with subvolumes | Snapshots, compression, modern features |
 | Desktop | KDE Plasma 6 | Highly customizable, Wayland-ready |
 | Display manager | SDDM | Native KDE integration |
-| Setup wizard | Python + GTK4/Libadwaita | Modern UI toolkit, easy to develop |
+| Orchestration | Julia | High-level workflow coordination, `ccall` FFI to Rust |
+| Core implementation | Rust | Hardware detection, GTK4 UI (gtk4-rs), TOML parsing, config generation |
+| Low-level fallback | C/C++ | Kernel ioctls, legacy library FFI without Rust bindings |
+| UI toolkit | GTK4/Libadwaita (via gtk4-rs) | Modern UI, Rust-native bindings |
+| No Python | — | Entire stack is Julia + Rust + C; zero Python dependency |
 | Boot (UEFI) | GRUB | Widest hardware compatibility |
 | Boot (BIOS) | syslinux | Lightweight, reliable for legacy |
 | CI/CD | GitHub Actions | Free for open-source, matrix builds |
@@ -602,11 +725,13 @@ blunux2 will need its own repository for distribution-specific packages:
 blunux2-repo/
 ├── blunux2-settings/       # Default configs, branding
 │   └── PKGBUILD
-├── blunux2-livecd/         # Live session wizard + scripts
-│   └── PKGBUILD
+├── blunux2-livecd/         # Live session wizard (Julia + Rust + C)
+│   └── PKGBUILD            #   Builds libblunux.so (Rust) + main.jl (Julia)
+├── blunux2-toml2cal/       # config.toml → Calamares YAML translator (Rust)
+│   └── PKGBUILD            #   cargo build --release → blunux-toml2cal
 ├── blunux2-themes/         # KDE themes, icons, wallpapers
 │   └── PKGBUILD
-├── blunux2-calamares/      # Calamares configuration
+├── blunux2-calamares/      # Calamares template configs (generated at install time)
 │   └── PKGBUILD
 ├── blunux2-store/          # App store frontend (pamac/bigstore-like)
 │   └── PKGBUILD

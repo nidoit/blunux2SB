@@ -40,7 +40,8 @@ end
 function generate_packages(cfg::Dict)
     println("\n── Generating packages.x86_64 ──")
 
-    pkgs = String[]
+    pkgs = String[]   # Official repo packages
+    aur  = String[]   # AUR/custom repo packages (require custom repo or pre-built)
 
     # Base system (always included)
     append!(pkgs, [
@@ -61,7 +62,6 @@ function generate_packages(cfg::Dict)
     if bootloader == "grub"
         append!(pkgs, ["grub", "syslinux"])
     elseif bootloader == "systemd-boot"
-        # systemd-boot is part of systemd, no extra package
         push!(pkgs, "syslinux")
     else  # nmbl (EFISTUB)
         push!(pkgs, "syslinux")
@@ -86,12 +86,8 @@ function generate_packages(cfg::Dict)
     # Fonts
     append!(pkgs, ["noto-fonts", "noto-fonts-cjk", "noto-fonts-emoji", "ttf-liberation"])
 
-    # Installer
-    append!(pkgs, ["calamares", "calamares-extensions"])
-
-    # Build toolchain for Rust binaries (only needed at build time, but
-    # also useful if user wants to develop on the live system)
-    append!(pkgs, ["rust", "gcc", "cmake", "gtk4", "libadwaita"])
+    # Installer (AUR — must be pre-built into custom repo)
+    append!(aur, ["calamares", "calamares-extensions"])
 
     # Desktop environment
     packages = get(cfg, "packages", Dict())
@@ -105,7 +101,7 @@ function generate_packages(cfg::Dict)
 
     # Browsers
     browser = get(packages, "browser", Dict())
-    get(browser, "firefox", false)   && push!(pkgs, "firefox")
+    get(browser, "firefox", false) && push!(pkgs, "firefox")
 
     # Office
     office = get(packages, "office", Dict())
@@ -124,11 +120,13 @@ function generate_packages(cfg::Dict)
     if get(im, "enabled", false)
         engine = get(im, "engine", "kime")
         if engine == "kime"
-            append!(pkgs, ["kime", "kime-indicator"])
+            append!(aur, ["kime", "kime-indicator"])
         elseif engine == "fcitx5"
-            append!(pkgs, ["fcitx5", "fcitx5-hangul", "fcitx5-gtk", "fcitx5-qt", "fcitx5-configtool"])
+            append!(pkgs, ["fcitx5", "fcitx5-gtk", "fcitx5-qt", "fcitx5-configtool"])
+            push!(aur, "fcitx5-hangul")
         elseif engine == "ibus"
-            append!(pkgs, ["ibus", "ibus-hangul"])
+            push!(pkgs, "ibus")
+            push!(aur, "ibus-hangul")
         end
     end
 
@@ -138,20 +136,45 @@ function generate_packages(cfg::Dict)
         append!(pkgs, ["bluez", "bluez-utils", "bluedevil"])
     end
 
-    # Custom blunux2 packages (from custom repo)
-    append!(pkgs, [
+    # Custom blunux2 packages (require custom repo)
+    append!(aur, [
         "blunux2-settings", "blunux2-themes",
         "blunux2-calamares-config",
     ])
 
+    # Check if custom repo is enabled in pacman.conf
+    pacman_conf = read(joinpath(PROFILE, "pacman.conf"), String)
+    custom_repo_enabled = occursin(r"^\[blunux2\]"m, pacman_conf)
+
     # Write packages.x86_64
     pkg_file = joinpath(PROFILE, "packages.x86_64")
     open(pkg_file, "w") do f
+        println(f, "# Official repo packages")
         for pkg in unique(pkgs)
             println(f, pkg)
         end
+        if custom_repo_enabled
+            println(f, "\n# AUR/custom repo packages")
+            for pkg in unique(aur)
+                println(f, pkg)
+            end
+        else
+            println(f, "\n# AUR/custom repo packages (commented out — enable [blunux2] repo in pacman.conf)")
+            for pkg in unique(aur)
+                println(f, "#$pkg")
+            end
+        end
     end
-    println("  Wrote $(length(unique(pkgs))) packages to packages.x86_64")
+
+    println("  Wrote $(length(unique(pkgs))) official packages")
+    if !isempty(aur)
+        if custom_repo_enabled
+            println("  Wrote $(length(unique(aur))) custom repo packages")
+        else
+            println("  Skipped $(length(unique(aur))) AUR/custom packages (no custom repo)")
+            println("  ⚠  To include them, enable [blunux2] repo in profile/pacman.conf")
+        end
+    end
 end
 
 # ---------------------------------------------------------------------------

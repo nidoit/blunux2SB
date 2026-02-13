@@ -4,13 +4,13 @@
 
 ## 기술 스택
 
-| 계층 | 언어 | 역할 |
-|------|------|------|
-| 오케스트레이터 | **Julia** | 위자드 단계 조율, `ccall`로 Rust 호출 |
-| 코어 라이브러리 | **Rust** | 하드웨어 감지, GTK4 UI, TOML 파싱, Calamares YAML 생성 |
+| 구성 요소 | 언어 | 역할 |
+|-----------|------|------|
+| `blunux-wizard` | **Rust** | 하드웨어 감지, config.toml 로딩, 라이브 세션 설정, 데스크톱 실행 |
+| `blunux-toml2cal` | **Rust** | config.toml → Calamares YAML 변환 |
 | 저수준 폴백 | **C/C++** | Rust 바인딩이 없는 커널 ioctl 등 |
 
-> Python은 전체 스택에서 사용하지 않습니다.
+> Python, Julia 없이 Rust + C만 사용합니다.
 
 ## 프로젝트 구조
 
@@ -30,22 +30,27 @@ blunux2SB/
 │   │       ├── generate.rs            #   Calamares YAML 생성기 9종
 │   │       └── packages.rs            #   패키지 불리언 → pacman 패키지명 매핑
 │   │
-│   └── libblunux/                     # 공유 라이브러리 (cdylib) — Julia FFI용
+│   └── wizard/                        # 셋업 위자드 (Rust 바이너리)
 │       └── src/
-│           ├── lib.rs
-│           ├── hwdetect.rs            #   GPU, 오디오, UEFI, RAM 감지
-│           ├── config.rs              #   설정 도우미 (로드, 저장, setter)
-│           └── ffi.rs                 #   Julia ccall용 extern "C" 함수 14개
-│
-├── src/livecd/
-│   └── main.jl                        # Julia 오케스트레이터
+│           ├── main.rs                #   하드웨어 감지 → config 로딩 → 데스크톱 실행
+│           └── hwdetect.rs            #   GPU, 오디오, UEFI, RAM 감지
 │
 └── scripts/
-    ├── startblunux                    # 라이브 세션 진입점 → Julia → Plasma
+    ├── startblunux                    # 라이브 세션 진입점 → Rust wizard → Plasma
     └── calamares-blunux               # toml2cal 실행 → Calamares 실행
 ```
 
 ## 작동 방식
+
+### 라이브 세션 부팅
+
+```
+Bash (startblunux) → Rust (blunux-wizard) → exec startplasma-wayland
+```
+
+`blunux-wizard`가 직접 하드웨어 감지, config.toml 로딩, 로케일/키보드 적용을 수행한 뒤 Plasma 세션을 실행합니다. 중간 레이어 없이 단일 바이너리로 처리합니다.
+
+### 설치 과정
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌───────────────────┐
@@ -71,7 +76,6 @@ blunux2SB/
 ### 필수 도구
 
 - Rust (1.75+)
-- Julia
 - GCC (C 폴백 컴포넌트용)
 
 ### Rust 워크스페이스 빌드
@@ -88,8 +92,8 @@ cargo test
 ```
 
 빌드 결과물:
+- `target/release/blunux-wizard` — 셋업 위자드 (하드웨어 감지 + 데스크톱 실행)
 - `target/release/blunux-toml2cal` — TOML→Calamares 변환 CLI
-- `target/release/libblunux.so` — Julia FFI용 공유 라이브러리
 
 ### toml2cal 사용법
 
@@ -150,6 +154,7 @@ firefox = true
 - **드라이버** — Rust 하드웨어 감지가 자동 선택합니다 (NVIDIA→독점 드라이버, AMD/Intel→mesa). 사용자 선택이 필요 없습니다.
 - **파일시스템** — btrfs 서브볼륨이 기본이며 유일한 옵션입니다.
 - **부트로더** — GRUB, systemd-boot, nmbl(EFISTUB) 중 선택 가능합니다.
+- **Julia 제거** — 오케스트레이션을 Julia에서 Rust로 통합. Julia JIT 시작 지연 제거, ISO 크기 ~700MB 절감, FFI 레이어 제거로 구조 단순화.
 
 ## 라이선스
 

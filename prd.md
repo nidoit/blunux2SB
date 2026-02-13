@@ -26,9 +26,9 @@ The system consists of four major subsystems:
 │ ISO Build│ Live Boot│ Setup     │ Disk Installation │
 │ System   │ System   │ Wizard    │ (Calamares)       │
 ├──────────┼──────────┼───────────┼───────────────────┤
-│ archiso/ │ GRUB/    │ Julia     │ config.toml →     │
-│ mkarchiso│ syslinux │ orchestr. │ Calamares YAML    │
-│ profiles │ initramfs│ Rust core │ (auto-translated) │
+│ archiso/ │ GRUB/    │ Rust      │ config.toml →     │
+│ mkarchiso│ syslinux │ wizard    │ Calamares YAML    │
+│ profiles │ initramfs│ binary    │ (auto-translated) │
 │ CI/CD    │ squashfs │ C fallback│ btrfs default     │
 │ pipeline │ overlayfs│ GTK4 UI   │                   │
 └──────────┴──────────┴───────────┴───────────────────┘
@@ -65,12 +65,11 @@ blunux2-profile/
 │   └── usr/
 │       ├── bin/
 │       │   ├── startblunux          # Main live session entry point
+│       │   ├── blunux-wizard        # Setup wizard (Rust binary — hw detect, config, desktop launch)
 │       │   ├── calamares-blunux     # Installer wrapper script
 │       │   └── blunux-toml2cal      # config.toml → Calamares translator (Rust)
 │       ├── share/blunux/
-│       │   ├── livecd/              # Setup wizard (Julia orchestration + Rust core)
-│       │   │   ├── main.jl          # Julia entry point / orchestrator
-│       │   │   └── libblunux.so     # Rust shared library (hw detect, config, UI)
+│       │   ├── livecd/              # Setup wizard assets
 │       │   ├── calamares/           # Installer config templates
 │       │   └── config.toml          # User-facing install configuration
 │       └── lib/calamares/           # Custom Calamares modules
@@ -182,9 +181,8 @@ ttf-liberation
 calamares
 calamares-extensions
 
-# ── Build Toolchain (Julia + Rust + C) ──
-julia                    # Orchestration language
-rust                     # Core implementation (hw detect, config, UI)
+# ── Build Toolchain (Rust + C) ──
+rust                     # Wizard, config translator, hw detect, UI
 gcc                      # C compiler for low-level fallback code
 cmake                    # Build system for C components
 gtk4                     # GTK4 UI library (used via Rust gtk4-rs)
@@ -202,7 +200,7 @@ base-devel
 # ── blunux2 Custom ──
 # (from custom repo or AUR)
 blunux2-settings
-blunux2-livecd           # Setup wizard (Julia + Rust + C, no Python)
+blunux2-livecd           # Setup wizard (Rust binary, no Python)
 blunux2-themes
 blunux2-calamares-config
 blunux2-toml2cal         # config.toml → Calamares YAML translator (Rust)
@@ -395,19 +393,16 @@ Once the overlayfs root is assembled and `switch_root` is called:
 
 ### 4.5 Setup Wizard (First-Run Experience)
 
-The setup wizard uses a **Julia + Rust + C** stack — no Python anywhere in the pipeline:
+The setup wizard is a single **Rust binary** (`blunux-wizard`) — no Python, no Julia, no intermediate layers:
 
-- **Julia** — Top-level orchestration, workflow sequencing, calling into Rust libraries
-- **Rust** — Core logic: hardware detection, config parsing/generation, GTK4 UI, TOML→Calamares translation
+- **Rust** — All logic: hardware detection, config parsing, live session setup, desktop launch
 - **C/C++** — Only used where Rust cannot go (e.g., direct kernel ioctls, legacy library FFI that lacks Rust bindings)
 
-#### Language Responsibility Breakdown
-
-| Layer | Language | Responsibility |
-|-------|----------|---------------|
-| Orchestrator | Julia | Sequence wizard steps, call Rust via `ccall`, coordinate config flow |
-| Core library | Rust (`libblunux.so`) | Hardware detection, GTK4/Libadwaita UI, TOML parsing, Calamares YAML generation |
-| Low-level fallback | C | Kernel-level hardware probing where no Rust crate exists (e.g., custom ioctl wrappers) |
+| Component | Language | Responsibility |
+|-----------|----------|---------------|
+| `blunux-wizard` | Rust | Hardware detection, config.toml loading, locale/keyboard setup, exec desktop |
+| `blunux-toml2cal` | Rust | config.toml → Calamares YAML translation |
+| Low-level fallback | C | Kernel-level hardware probing where no Rust crate exists |
 
 #### Wizard Flow
 
@@ -415,28 +410,18 @@ The setup wizard uses a **Julia + Rust + C** stack — no Python anywhere in the
 # /usr/bin/startblunux (simplified)
 #!/bin/bash
 
-# Julia orchestrates the entire wizard.
-# Rust library (libblunux.so) handles:
-#   - GPU/audio/display hardware detection
-#   - GTK4/Libadwaita UI rendering
-#   - config.toml reading and writing
-# C fallback used only for low-level hw probing without Rust bindings.
+# Rust binary handles everything directly — no Julia, no FFI layers.
+blunux-wizard
 
-julia /usr/share/blunux/livecd/main.jl
-
-# main.jl internally:
-#   1. Calls Rust hw-detect functions via ccall → libblunux.so
-#   2. Launches GTK4 wizard UI (Rust/gtk4-rs)
-#   3. Auto-detects GPU and selects drivers (NVIDIA→proprietary, AMD/Intel→mesa)
-#   4. Collects user selections:
-#      - Language, keyboard layout
-#      - Swap preference (none / small / suspend / file)
-#   5. Writes selections to config.toml
-#   6. Calls Rust config-apply functions to set live session configs
-#   7. Execs startplasma-wayland (or startplasma-x11)
+# blunux-wizard internally:
+#   1. Detects GPU, audio, UEFI, RAM via /sys and /proc
+#   2. Auto-selects drivers (NVIDIA→proprietary, AMD/Intel→mesa)
+#   3. Loads config.toml
+#   4. Applies locale and keyboard to live session
+#   5. Execs startplasma-wayland (or startplasma-x11 as fallback)
 #
 # Theme: single curated blunux2 theme, no user selection.
-# Drivers: auto-detected by Rust hw-detect, no user selection.
+# Drivers: auto-detected, no user selection.
 ```
 
 **Key design principle:** All wizard selections are written to `config.toml`. When the user clicks "Install", the Rust-based translator (`blunux-toml2cal`) reads `config.toml` and generates the full set of Calamares YAML configuration files automatically. The user never touches Calamares config directly — `config.toml` is the single source of truth.
@@ -716,11 +701,11 @@ blunux2-2026.02.13-x86_64.iso
 | Default FS | btrfs with subvolumes | Snapshots, compression, modern features |
 | Desktop | KDE Plasma 6 | Highly customizable, Wayland-ready |
 | Display manager | SDDM | Native KDE integration |
-| Orchestration | Julia | High-level workflow coordination, `ccall` FFI to Rust |
-| Core implementation | Rust | Hardware detection, GTK4 UI (gtk4-rs), TOML parsing, config generation |
+| Setup wizard | Rust (`blunux-wizard`) | Hardware detection, config loading, live session setup, desktop launch |
+| Config translator | Rust (`blunux-toml2cal`) | config.toml → Calamares YAML generation |
 | Low-level fallback | C/C++ | Kernel ioctls, legacy library FFI without Rust bindings |
 | UI toolkit | GTK4/Libadwaita (via gtk4-rs) | Modern UI, Rust-native bindings |
-| No Python | — | Entire stack is Julia + Rust + C; zero Python dependency |
+| No Python/Julia | — | Entire stack is Rust + C; zero Python/Julia dependency |
 | Boot (UEFI) | GRUB | Widest hardware compatibility |
 | Boot (BIOS) | syslinux | Lightweight, reliable for legacy |
 | CI/CD | GitHub Actions | Free for open-source, matrix builds |
@@ -737,8 +722,8 @@ blunux2 will need its own repository for distribution-specific packages:
 blunux2-repo/
 ├── blunux2-settings/       # Default configs, branding
 │   └── PKGBUILD
-├── blunux2-livecd/         # Live session wizard (Julia + Rust + C)
-│   └── PKGBUILD            #   Builds libblunux.so (Rust) + main.jl (Julia)
+├── blunux2-livecd/         # Live session wizard (Rust binary)
+│   └── PKGBUILD            #   cargo build --release → blunux-wizard
 ├── blunux2-toml2cal/       # config.toml → Calamares YAML translator (Rust)
 │   └── PKGBUILD            #   cargo build --release → blunux-toml2cal
 ├── blunux2-themes/         # KDE themes, icons, wallpapers

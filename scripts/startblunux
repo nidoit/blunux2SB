@@ -1,20 +1,15 @@
 #!/bin/bash
 # /usr/bin/startblunux — blunux2 Live Session Entry Point
 #
-# Called by SDDM auto-login or manually. Launches the Julia orchestrator
-# which coordinates hardware detection (Rust) and applies config.toml settings.
+# Called by SDDM auto-login or manually. Launches the Rust wizard binary
+# which handles hardware detection, config loading, and desktop launch.
 #
-# Stack: Bash (this script) → Julia (orchestrator) → Rust (libblunux.so) → C (fallback)
-# No Python anywhere.
+# Stack: Bash (this script) → Rust (blunux-wizard) → C (fallback)
+# No Python or Julia.
 
 set -euo pipefail
 
-BLUNUX_SHARE="/usr/share/blunux"
-LIVECD_DIR="${BLUNUX_SHARE}/livecd"
-CONFIG_FILE="${BLUNUX_SHARE}/config.toml"
-
-# Ensure libblunux.so is on the library path
-export LD_LIBRARY_PATH="${LIVECD_DIR}:${LD_LIBRARY_PATH:-}"
+CONFIG_FILE="/usr/share/blunux/config.toml"
 
 # Log to journald
 exec > >(systemd-cat -t blunux-wizard) 2>&1
@@ -22,24 +17,18 @@ exec > >(systemd-cat -t blunux-wizard) 2>&1
 echo "blunux2: Starting setup wizard..."
 echo "blunux2: Config file: ${CONFIG_FILE}"
 
-# Verify required files exist
-if [[ ! -f "${LIVECD_DIR}/main.jl" ]]; then
-    echo "ERROR: main.jl not found at ${LIVECD_DIR}/main.jl"
+# Verify the wizard binary exists
+if ! command -v blunux-wizard &>/dev/null; then
+    echo "ERROR: blunux-wizard not found in PATH"
     echo "Falling back to direct desktop launch..."
     exec startplasma-wayland
 fi
 
-if [[ ! -f "${LIVECD_DIR}/libblunux.so" ]]; then
-    echo "ERROR: libblunux.so not found at ${LIVECD_DIR}/libblunux.so"
-    echo "Falling back to direct desktop launch..."
-    exec startplasma-wayland
-fi
+# Launch Rust wizard binary directly.
+# It detects hardware, loads config.toml, applies settings,
+# then exec's startplasma-wayland (replacing this process tree).
+blunux-wizard
 
-# Launch Julia orchestrator
-# Julia calls into libblunux.so for hw detection and config management,
-# then execs startplasma-wayland (replacing this process tree).
-julia "${LIVECD_DIR}/main.jl"
-
-# If Julia exits without exec-ing the desktop (error case), launch directly
+# If wizard exits without exec-ing the desktop (error case), launch directly
 echo "WARNING: Wizard exited without launching desktop. Starting Plasma directly..."
 exec startplasma-wayland

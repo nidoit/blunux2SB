@@ -173,27 +173,8 @@ efiSystemPartition: /boot/efi
 efiSystemPartitionSize: 512M
 efiSystemPartitionName: EFI
 
-defaultFileSystemType: btrfs
+defaultFileSystemType: ext4
 {encryption_block}
-btrfsSubvolumes:
-  - mountPoint: /
-    subvolume: /@
-  - mountPoint: /home
-    subvolume: /@home
-  - mountPoint: /var/cache
-    subvolume: /@cache
-  - mountPoint: /var/log
-    subvolume: /@log
-  - mountPoint: /.snapshots
-    subvolume: /@snapshots
-
-btrfsMountOptions:
-  - defaults
-  - noatime
-  - compress=zstd:3
-  - ssd
-  - discard=async
-  - space_cache=v2
 
 swapChoices:
 {swap_line}

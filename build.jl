@@ -71,7 +71,7 @@ function generate_packages(cfg::Dict)
     end
 
     # Filesystem
-    append!(pkgs, ["btrfs-progs", "dosfstools", "ntfs-3g", "e2fsprogs"])
+    append!(pkgs, ["dosfstools", "ntfs-3g", "e2fsprogs"])
 
     # Network
     append!(pkgs, ["networkmanager", "iwd", "openssh"])

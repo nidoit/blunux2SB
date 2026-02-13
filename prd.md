@@ -103,9 +103,7 @@ buildmodes=('iso')
 bootmodes=(
     'bios.syslinux.mbr'      # Legacy BIOS from MBR
     'bios.syslinux.eltorito'  # Legacy BIOS from optical
-    'uefi-ia32.grub.esp'      # 32-bit UEFI
     'uefi-x64.grub.esp'       # 64-bit UEFI
-    'uefi-ia32.grub.eltorito' # 32-bit UEFI optical
     'uefi-x64.grub.eltorito'  # 64-bit UEFI optical
 )
 arch="x86_64"

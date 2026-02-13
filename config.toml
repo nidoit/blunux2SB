@@ -29,7 +29,7 @@ type = "linux"
 # bootloader = "grub"         # GRUB 부트로더 (기본값, BIOS + UEFI 지원)
 # bootloader = "systemd-boot" # systemd-boot (UEFI 전용, 가벼움)
 # bootloader = "nmbl"         # 부트로더 없음 - EFISTUB 직접 부팅 (UEFI 전용, 가장 빠름)
-bootloader = "nmbl"
+bootloader = "systemd-boot"
 
 # 호스트 이름 (컴퓨터 이름)
 hostname = "nux"
@@ -55,7 +55,7 @@ autologin = true
 # swap = "small"      # 작은 스왑 (RAM 크기의 절반, 가벼운 사용)
 # swap = "suspend"    # 최대 절전용 스왑 (RAM과 같은 크기)
 # swap = "file"       # 스왑 파일 (파티션 대신 파일 사용)
-swap = "small"
+swap = "suspend"
 
 # 데스크톱 환경
 [packages.desktop]

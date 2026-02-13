@@ -174,7 +174,7 @@ engine = "kime"
 type = "linux"
 
 [install]
-bootloader = "nmbl"
+bootloader = "systemd-boot"
 hostname = "nux"
 username = "blu"
 root_password = "1234"
@@ -183,7 +183,7 @@ encryption = false
 autologin = true
 
 [disk]
-swap = "small"
+swap = "suspend"
 
 [packages.desktop]
 kde = true
@@ -236,8 +236,8 @@ bluetooth = true
 "#;
         let config: BlunuxConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.blunux.version, "2.0");
-        assert_eq!(config.install.bootloader, "nmbl");
-        assert_eq!(config.disk.swap, "small");
+        assert_eq!(config.install.bootloader, "systemd-boot");
+        assert_eq!(config.disk.swap, "suspend");
         assert!(config.packages.desktop.kde);
         assert!(config.packages.browser.firefox);
         assert!(!config.packages.gaming.steam);

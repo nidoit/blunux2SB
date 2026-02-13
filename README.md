@@ -4,21 +4,32 @@
 
 ## 기술 스택
 
-| 구성 요소 | 언어 | 역할 |
-|-----------|------|------|
-| `blunux-wizard` | **Rust** | 하드웨어 감지, config.toml 로딩, 라이브 세션 설정, 데스크톱 실행 |
-| `blunux-toml2cal` | **Rust** | config.toml → Calamares YAML 변환 |
-| 저수준 폴백 | **C/C++** | Rust 바인딩이 없는 커널 ioctl 등 |
+| 구성 요소 | 언어 | 위치 | 역할 |
+|-----------|------|------|------|
+| `build.jl` | **Julia** | 개발 PC | ISO 빌드 오케스트레이션 (config.toml 읽기 → archiso 프로파일 생성 → mkarchiso 실행) |
+| `blunux-wizard` | **Rust** | ISO 내부 | 하드웨어 감지, config.toml 로딩, 라이브 세션 설정, 데스크톱 실행 |
+| `blunux-toml2cal` | **Rust** | ISO 내부 | config.toml → Calamares YAML 변환 |
+| 저수준 폴백 | **C/C++** | ISO 내부 | Rust 바인딩이 없는 커널 ioctl 등 |
 
-> Python, Julia 없이 Rust + C만 사용합니다.
+> ISO 내부에는 Python, Julia 없이 Rust + C만 포함됩니다. Julia는 개발자 PC에서 빌드용으로만 사용합니다.
 
 ## 프로젝트 구조
 
 ```
 blunux2SB/
 ├── config.toml                        # 사용자 설정 파일 (설치 옵션)
+├── build.jl                           # Julia ISO 빌드 오케스트레이터 (개발자 PC용)
 ├── prd.md                             # 제품 요구 사항 문서
 ├── Cargo.toml                         # Rust 워크스페이스
+│
+├── profile/                           # archiso 프로파일 (build.jl이 동적 생성)
+│   ├── profiledef.sh                  #   ISO 마스터 설정 (이름, 부트모드, squashfs)
+│   ├── pacman.conf                    #   패키지 관리자 설정
+│   ├── packages.x86_64                #   ISO에 포함될 패키지 목록 (자동 생성)
+│   ├── grub/grub.cfg                  #   GRUB 부트 메뉴
+│   ├── syslinux/syslinux.cfg          #   BIOS 부트 설정
+│   ├── efiboot/loader/                #   UEFI systemd-boot 설정
+│   └── airootfs/                      #   루트 파일시스템 오버레이 (자동 생성)
 │
 ├── crates/
 │   ├── blunux-config/                 # config.toml 타입 정의 (공유)
@@ -75,20 +86,52 @@ Bash (startblunux) → Rust (blunux-wizard) → exec startplasma-wayland
 
 ### 필수 도구
 
-- Rust (1.75+)
-- GCC (C 폴백 컴포넌트용)
+- **Julia** (1.9+) — ISO 빌드 오케스트레이션
+- **Rust** (1.75+) — 바이너리 컴파일
+- **GCC** — C 폴백 컴포넌트
+- **archiso** — Arch Linux ISO 생성 (`sudo pacman -S archiso`)
 
-### Rust 워크스페이스 빌드
+### ISO 빌드 (전체)
 
 ```bash
-# 컴파일 확인
-cargo check
+# Julia 패키지 설치 (최초 1회)
+julia -e 'using Pkg; Pkg.add("TOML")'
 
-# 릴리스 빌드
-cargo build --release
+# ISO 빌드 (config.toml 읽기 → Rust 빌드 → archiso 프로파일 생성 → ISO 생성)
+julia build.jl
+```
 
-# 테스트 실행
-cargo test
+빌드 과정:
+1. `config.toml`을 읽어 설정 분석
+2. `packages.x86_64` 생성 (config에 맞는 패키지 목록)
+3. `airootfs/` 오버레이 생성 (hostname, locale, mkinitcpio)
+4. `cargo build --release` 실행 (Rust 바이너리 컴파일)
+5. 바이너리 + 스크립트를 `airootfs/usr/bin/`에 복사
+6. `sudo mkarchiso` 실행 → ISO 파일 출력
+
+### 빌드 옵션
+
+```bash
+# 프로파일만 생성 (ISO 빌드 없이)
+julia build.jl --profile-only
+
+# Rust 빌드 건너뛰기 (기존 바이너리 사용)
+julia build.jl --skip-rust
+```
+
+### 환경 변수
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `BLUNUX_WORK` | `/tmp/blunux2-work` | mkarchiso 작업 디렉토리 |
+| `BLUNUX_OUT` | `./out` | ISO 출력 디렉토리 |
+
+### Rust만 빌드 (개발용)
+
+```bash
+cargo check          # 컴파일 확인
+cargo build --release  # 릴리스 빌드
+cargo test           # 테스트 실행
 ```
 
 빌드 결과물:
@@ -154,7 +197,7 @@ firefox = true
 - **드라이버** — Rust 하드웨어 감지가 자동 선택합니다 (NVIDIA→독점 드라이버, AMD/Intel→mesa). 사용자 선택이 필요 없습니다.
 - **파일시스템** — btrfs 서브볼륨이 기본이며 유일한 옵션입니다.
 - **부트로더** — GRUB, systemd-boot, nmbl(EFISTUB) 중 선택 가능합니다.
-- **Julia 제거** — 오케스트레이션을 Julia에서 Rust로 통합. Julia JIT 시작 지연 제거, ISO 크기 ~700MB 절감, FFI 레이어 제거로 구조 단순화.
+- **Julia** — ISO 내부가 아닌 개발자 PC에서 빌드 오케스트레이션용으로만 사용합니다. ISO 런타임에는 Julia가 포함되지 않아 ISO 크기가 줄어들고 JIT 시작 지연이 없습니다.
 
 ## 라이선스
 

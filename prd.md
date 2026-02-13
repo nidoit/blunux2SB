@@ -29,7 +29,7 @@ The system consists of four major subsystems:
 │ Julia    │ GRUB/    │ Rust      │ config.toml →     │
 │ build.jl │ syslinux │ wizard    │ Calamares YAML    │
 │ (dev-side│ initramfs│ binary    │ (auto-translated) │
-│ only, not│ squashfs │ C fallback│ btrfs default     │
+│ only, not│ squashfs │ C fallback│ ext4 default      │
 │ in ISO)  │ overlayfs│           │                   │
 └──────────┴──────────┴───────────┴───────────────────┘
      ↑ Developer machine               ↑ Inside the ISO
@@ -140,7 +140,6 @@ efibootmgr
 syslinux
 
 # ── Filesystem ──
-btrfs-progs
 dosfstools
 ntfs-3g
 e2fsprogs
@@ -482,7 +481,7 @@ firefox = true
 **Design decisions:**
 - **Theme** — Single curated blunux2 theme ships by default. No theme selection in the wizard or config.toml.
 - **Drivers** — Auto-detected at boot by Rust hw-detect (NVIDIA → proprietary, AMD/Intel → mesa). No user selection needed.
-- **Filesystem** — btrfs with subvolumes is the only supported layout (hardcoded in the translator).
+- **Filesystem** — ext4 is the only supported layout (hardcoded in the translator). Chosen for simplicity and stability.
 
 When the user is satisfied with their configuration (either via the GUI wizard or by editing `config.toml` directly), the installation proceeds as follows:
 
@@ -548,7 +547,7 @@ sequence:
     - summary                # Review before install
 
   - exec:                    # ── Installation Steps ──
-    - partition              # Create partitions (btrfs default)
+    - partition              # Create partitions (ext4 default)
     - mount                  # Mount target partitions
     - unpackfs               # Extract squashfs → target disk
     - machineid              # Generate /etc/machine-id
@@ -599,27 +598,7 @@ efiSystemPartition: /boot/efi
 efiSystemPartitionSize: 512M
 efiSystemPartitionName: EFI
 
-defaultFileSystemType: btrfs
-
-btrfsSubvolumes:
-  - mountPoint: /
-    subvolume: /@
-  - mountPoint: /home
-    subvolume: /@home
-  - mountPoint: /var/cache
-    subvolume: /@cache
-  - mountPoint: /var/log
-    subvolume: /@log
-  - mountPoint: /.snapshots
-    subvolume: /@snapshots
-
-btrfsMountOptions:
-  - defaults
-  - noatime
-  - compress=zstd:3
-  - ssd
-  - discard=async
-  - space_cache=v2
+defaultFileSystemType: ext4
 
 swapChoices:
   - none
@@ -721,7 +700,7 @@ blunux2-2026.02.13-x86_64.iso
 | Root FS overlay | overlayfs (tmpfs upper) | Standard Linux overlay, volatile by design |
 | Installer | Calamares (via config.toml) | Universal framework, driven by TOML→YAML translation |
 | Install config | config.toml → Calamares YAML | User edits TOML; Rust translator generates Calamares configs |
-| Default FS | btrfs with subvolumes | Snapshots, compression, modern features |
+| Default FS | ext4 | Simple, stable, battle-tested, universal support |
 | Desktop | KDE Plasma 6 | Highly customizable, Wayland-ready |
 | Display manager | SDDM | Native KDE integration |
 | Setup wizard | Rust (`blunux-wizard`) | Hardware detection, config loading, live session setup, desktop launch |
@@ -802,12 +781,12 @@ dd bs=4M if=/tmp/out/blunux2-*.iso of=/dev/sdX status=progress
 
 ## 10. Future Considerations
 
-- **Persistent live USB** — Allow saving changes across reboots using a secondary partition with ext4/btrfs
+- **Persistent live USB** — Allow saving changes across reboots using a secondary partition with ext4
 - **Netboot (PXE)** — archiso already supports PXE boot via the pxe hooks; enable for lab/classroom deployments
 - **ARM64 port** — archiso supports ARM profiles for Raspberry Pi / ARM laptops
 - **Immutable variant** — Consider an immutable/OSTree-based variant for enterprise use
 - **Auto-update ISO** — Script to rebuild ISOs nightly from latest packages
-- **Snapshot integration** — Timeshift/snapper integration with btrfs subvolumes for rollback
+- **Snapshot integration** — Timeshift integration for rollback
 - **Korean/Swedish locale packs** — Pre-configured CJK input methods and Swedish keyboard layouts
 
 ---

@@ -9,8 +9,7 @@ install_dir="arch"
 buildmodes=('iso')
 bootmodes=(
     'bios.syslinux'
-    'uefi-x64.systemd-boot.esp'
-    'uefi-x64.systemd-boot.eltorito'
+    'uefi-x64.systemd-boot'
 )
 arch="x86_64"
 pacman_conf="pacman.conf"

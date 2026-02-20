@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 
 use crate::config::{AgentConfig, Language};
@@ -18,7 +19,11 @@ pub struct Agent {
     memory: Memory,
     safety: SafetyChecker,
     conversation: Vec<Message>,
+    /// Per-user conversation history for daemon mode (keyed by phone number).
+    user_conversations: HashMap<String, Vec<Message>>,
     lang: Language,
+    /// When true, skip interactive confirmation prompts (daemon / WhatsApp mode).
+    auto_confirm: bool,
 }
 
 impl Agent {
@@ -34,8 +39,17 @@ impl Agent {
             memory,
             safety,
             conversation: Vec::new(),
+            user_conversations: HashMap::new(),
             lang: config.language.clone(),
+            auto_confirm: false,
         })
+    }
+
+    /// Create an agent configured for daemon / WhatsApp mode (auto-confirms all prompts).
+    pub fn new_daemon(config: &AgentConfig) -> Result<Self, AgentError> {
+        let mut agent = Self::new(config)?;
+        agent.auto_confirm = true;
+        Ok(agent)
     }
 
     pub async fn chat(&mut self, user_message: &str) -> Result<String, AgentError> {
@@ -171,6 +185,36 @@ impl Agent {
 
     pub fn reset_conversation(&mut self) {
         self.conversation.clear();
+    }
+
+    /// Clear the stored conversation history for a specific user (daemon mode).
+    pub fn reset_user_conversation(&mut self, phone: &str) {
+        self.user_conversations.remove(phone);
+    }
+
+    /// Process a message on behalf of a specific user (daemon / WhatsApp mode).
+    /// Each phone number maintains its own conversation history.
+    pub async fn chat_as_user(
+        &mut self,
+        phone: &str,
+        user_message: &str,
+    ) -> Result<String, AgentError> {
+        // Restore per-user conversation
+        let mut conv = self
+            .user_conversations
+            .remove(phone)
+            .unwrap_or_default();
+
+        // Swap in the user's conversation
+        std::mem::swap(&mut self.conversation, &mut conv);
+
+        let result = self.chat(user_message).await;
+
+        // Swap back and store
+        std::mem::swap(&mut self.conversation, &mut conv);
+        self.user_conversations.insert(phone.to_string(), conv);
+
+        result
     }
 
     fn build_system_prompt(&self) -> Result<String, AgentError> {
@@ -329,6 +373,10 @@ impl Agent {
     }
 
     fn prompt_confirmation(&self) -> bool {
+        if self.auto_confirm {
+            return true;
+        }
+
         print!("  {}", strings::confirm_action(&self.lang));
         let _ = io::stdout().flush();
 

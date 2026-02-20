@@ -1,0 +1,21 @@
+[Unit]
+Description=Blunux WhatsApp Bridge
+Documentation=https://github.com/blunux/blunux
+After=network.target blunux-ai-agent.service
+Requires=blunux-ai-agent.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.config/blunux-ai/whatsapp-bridge
+ExecStart=/usr/bin/node /usr/local/lib/blunux-wa-bridge/src/index.js
+Restart=on-failure
+RestartSec=10s
+Environment=NODE_ENV=production
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=blunux-wa-bridge
+
+[Install]
+WantedBy=default.target

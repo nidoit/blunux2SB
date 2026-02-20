@@ -1,0 +1,18 @@
+[Unit]
+Description=Blunux AI Agent Daemon
+Documentation=https://github.com/blunux/blunux
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/blunux-ai daemon
+Restart=on-failure
+RestartSec=5s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=blunux-ai
+
+[Install]
+WantedBy=default.target

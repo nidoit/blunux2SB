@@ -2,6 +2,7 @@ use std::io::Write as _;
 
 mod agent;
 mod config;
+mod daemon;
 mod error;
 mod ipc;
 mod memory;
@@ -41,6 +42,8 @@ enum Command {
         #[command(subcommand)]
         action: MemoryAction,
     },
+    /// Run as background daemon (Unix socket, for WhatsApp bridge)
+    Daemon,
 }
 
 #[derive(Subcommand)]
@@ -177,6 +180,22 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::Status) => {
             run_status(&config_dir, &lang)?;
+        }
+        Some(Command::Daemon) => {
+            match AgentConfig::load(&config_dir) {
+                Ok(cfg) => {
+                    daemon::run_daemon(&cfg).await?;
+                }
+                Err(_) => {
+                    let msg = match lang {
+                        Language::Korean => {
+                            "설정이 필요합니다. 'blunux-ai setup'을 먼저 실행하세요."
+                        }
+                        Language::English => "Setup required. Please run 'blunux-ai setup' first.",
+                    };
+                    println!("\n  {msg}\n");
+                }
+            }
         }
         Some(Command::Memory { action }) => {
             let mem = Memory::new(config_dir);

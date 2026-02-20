@@ -120,6 +120,13 @@ bluetooth = true                 # 블루투스 지원
 enabled = true                   # AI Agent 포함 여부
 provider = "claude"              # "claude" | "deepseek"
 claude_mode = "oauth"            # "oauth" (Pro/Max 구독) | "api" (토큰 과금)
-whatsapp_enabled = false         # WhatsApp 브리지 (Phase 2 예정)
+whatsapp_enabled = false         # WhatsApp 브리지 활성화 여부 (Phase 2)
 language = "auto"                # "auto" (locale에서 감지) | "ko" | "en"
 safe_mode = true                 # 안전 모드 (위험 명령 차단)
+
+# WhatsApp 브리지 설정 (whatsapp_enabled = true 일 때 적용)
+[whatsapp]
+# 허용된 전화번호 목록 (형식: "+821012345678"). 비어 있으면 모두 허용.
+allowed_numbers = []
+# 사용자당 분당 최대 메시지 수 (속도 제한)
+max_messages_per_minute = 5

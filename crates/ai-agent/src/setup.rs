@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use dialoguer::{Input, Password, Select};
 
-use crate::config::{AgentConfig, ClaudeMode, Language, ModelId, ProviderType};
+use crate::config::{AgentConfig, ClaudeMode, Language, ModelId, ProviderType, WhatsAppConfig};
 use crate::error::AgentError;
 use crate::memory::Memory;
 use crate::strings;
@@ -61,6 +61,10 @@ impl SetupWizard {
             language: self.lang.clone(),
             safe_mode: true,
             config_dir: self.config_dir.clone(),
+            whatsapp: WhatsAppConfig {
+                allowed_numbers: vec![],
+                max_messages_per_minute: 5,
+            },
         };
         config.save().map_err(AgentError::Config)?;
 

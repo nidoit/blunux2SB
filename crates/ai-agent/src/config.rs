@@ -11,6 +11,15 @@ pub struct AgentConfig {
     pub language: Language,
     pub safe_mode: bool,
     pub config_dir: PathBuf,
+    pub whatsapp: WhatsAppConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct WhatsAppConfig {
+    /// Phone numbers allowed to send commands. Format: "+821012345678"
+    pub allowed_numbers: Vec<String>,
+    /// Max messages per minute per user (rate limiting).
+    pub max_messages_per_minute: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -161,6 +170,23 @@ impl AgentConfig {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // [whatsapp] section — optional, defaults to empty
+        let wa_section = table.get("whatsapp");
+        let allowed_numbers: Vec<String> = wa_section
+            .and_then(|s| s.get("allowed_numbers"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let max_messages_per_minute = wa_section
+            .and_then(|s| s.get("max_messages_per_minute"))
+            .and_then(|v| v.as_integer())
+            .map(|v| v as u32)
+            .unwrap_or(5);
+
         Ok(Self {
             provider,
             claude_mode,
@@ -169,6 +195,10 @@ impl AgentConfig {
             language,
             safe_mode,
             config_dir: config_dir.to_path_buf(),
+            whatsapp: WhatsAppConfig {
+                allowed_numbers,
+                max_messages_per_minute,
+            },
         })
     }
 
@@ -187,6 +217,13 @@ impl AgentConfig {
             Language::Korean => "ko",
             Language::English => "en",
         };
+        let allowed_numbers_toml = self
+            .whatsapp
+            .allowed_numbers
+            .iter()
+            .map(|n| format!("\"{n}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         let content = format!(
             r#"[agent]
 provider = "{provider_str}"
@@ -195,10 +232,15 @@ model = "{model}"
 language = "{language_str}"
 safe_mode = {safe_mode}
 whatsapp_enabled = {whatsapp}
+
+[whatsapp]
+allowed_numbers = [{allowed_numbers_toml}]
+max_messages_per_minute = {max_mpm}
 "#,
             model = self.model.api_name(),
             safe_mode = self.safe_mode,
             whatsapp = self.whatsapp_enabled,
+            max_mpm = self.whatsapp.max_messages_per_minute,
         );
         let path = self.config_dir.join("config.toml");
         std::fs::write(&path, content).map_err(ConfigError::Io)?;
@@ -264,6 +306,10 @@ mod tests {
             language: Language::Korean,
             safe_mode: true,
             config_dir: tmp.path().to_path_buf(),
+            whatsapp: WhatsAppConfig {
+                allowed_numbers: vec![],
+                max_messages_per_minute: 5,
+            },
         };
         cfg.save().unwrap();
         let loaded = AgentConfig::load(tmp.path()).unwrap();

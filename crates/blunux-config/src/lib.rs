@@ -11,6 +11,31 @@ pub struct BlunuxConfig {
     pub install: Install,
     pub disk: Disk,
     pub packages: Packages,
+    #[serde(default)]
+    pub ai_agent: Option<AiAgent>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AiAgent {
+    pub enabled: bool,
+    pub provider: String,
+    pub claude_mode: String,
+    pub whatsapp_enabled: bool,
+    pub language: String,
+    pub safe_mode: bool,
+}
+
+impl Default for AiAgent {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: "claude".into(),
+            claude_mode: "oauth".into(),
+            whatsapp_enabled: false,
+            language: "auto".into(),
+            safe_mode: true,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]

@@ -226,7 +226,17 @@ function build_rust()
     target = joinpath(ROOT, "target/release")
     bindir = joinpath(PROFILE, "airootfs/usr/bin")
 
-    for bin in ["blunux-wizard", "blunux-toml2cal", "blunux-setup"]
+    # Conditionally include ai-agent
+    ai = get(get(cfg, "ai_agent", Dict()), "enabled", false)
+    binaries_to_copy = ["blunux-wizard", "blunux-toml2cal", "blunux-setup"]
+    if ai
+        println("  ai_agent.enabled = true → including blunux-ai")
+        push!(binaries_to_copy, "blunux-ai")
+    else
+        println("  ai_agent.enabled = false → skipping blunux-ai")
+    end
+
+    for bin in binaries_to_copy
         src = joinpath(target, bin)
         dst = joinpath(bindir, bin)
         if isfile(src)

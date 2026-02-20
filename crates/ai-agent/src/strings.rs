@@ -149,9 +149,72 @@ pub fn setup_done(lang: &Language) -> &'static str {
     }
 }
 
-pub fn setup_whatsapp_coming_soon(lang: &Language) -> &'static str {
+pub fn setup_whatsapp_title(lang: &Language) -> &'static str {
     match lang {
-        Language::Korean => "WhatsApp 브리지: 추후 지원 예정 (Phase 2)",
-        Language::English => "WhatsApp bridge: Coming soon (Phase 2)",
+        Language::Korean => "── WhatsApp 브리지 설정 ──",
+        Language::English => "── WhatsApp Bridge Setup ──",
+    }
+}
+
+pub fn setup_whatsapp_tos(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "WhatsApp 브리지는 비공식 API(whatsapp-web.js)를 사용합니다.\n     계정 보호를 위해 전용 WhatsApp 번호 사용을 강력히 권장합니다.",
+        Language::English => "WhatsApp bridge uses an unofficial API (whatsapp-web.js).\n     A dedicated WhatsApp number is strongly recommended to protect your account.",
+    }
+}
+
+pub fn setup_whatsapp_enable_prompt(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "WhatsApp 브리지를 활성화하시겠습니까?",
+        Language::English => "Enable WhatsApp bridge?",
+    }
+}
+
+pub fn setup_whatsapp_skip_label(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "건너뛰기 — CLI 채팅만 사용",
+        Language::English => "Skip — use CLI chat only",
+    }
+}
+
+pub fn setup_whatsapp_enable_label(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "활성화 — WhatsApp으로 원격 관리",
+        Language::English => "Enable — remote control via WhatsApp",
+    }
+}
+
+pub fn setup_whatsapp_phone_hint(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "허용할 전화번호를 입력하세요 (형식: +821012345678, 쉼표로 구분, 비워두면 모두 허용)",
+        Language::English => "Enter allowed phone numbers (format: +821012345678, comma-separated, empty = allow all)",
+    }
+}
+
+pub fn setup_whatsapp_phone_prompt(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "전화번호",
+        Language::English => "Phone numbers",
+    }
+}
+
+pub fn setup_whatsapp_enabled(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "WhatsApp 브리지 활성화됨. 허용된 번호:",
+        Language::English => "WhatsApp bridge enabled. Allowed numbers:",
+    }
+}
+
+pub fn setup_whatsapp_all_numbers(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "(모든 번호 허용 — 보안을 위해 번호를 지정하는 것을 권장합니다)",
+        Language::English => "(all numbers allowed — specifying numbers is recommended for security)",
+    }
+}
+
+pub fn setup_whatsapp_skipped(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "WhatsApp 브리지를 건너뜁니다. 나중에 'blunux-ai setup'으로 설정할 수 있습니다.",
+        Language::English => "WhatsApp bridge skipped. Run 'blunux-ai setup' again to configure it later.",
     }
 }

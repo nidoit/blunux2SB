@@ -178,6 +178,8 @@ fn test_setup_config_write() {
                 "+821087654321".to_string(),
             ],
             max_messages_per_minute: 10,
+            require_prefix: true,
+            session_timeout: 1800,
         },
     };
 

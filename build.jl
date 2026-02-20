@@ -216,7 +216,7 @@ end
 # Rust build
 # ---------------------------------------------------------------------------
 
-function build_rust()
+function build_rust(cfg::Dict)
     println("\n── Building Rust binaries ──")
 
     cmd = `cargo build --release --manifest-path $(joinpath(ROOT, "Cargo.toml"))`
@@ -225,15 +225,21 @@ function build_rust()
 
     target = joinpath(ROOT, "target/release")
     bindir = joinpath(PROFILE, "airootfs/usr/bin")
+    sharedir = joinpath(PROFILE, "airootfs/usr/share/blunux")
+    cardsdir = joinpath(PROFILE, "airootfs/usr/share/blunux-installer/cards")
 
     # Conditionally include ai-agent
-    ai = get(get(cfg, "ai_agent", Dict()), "enabled", false)
+    # Check both [packages.ai].agent (ISO build flag) and [ai_agent].enabled (runtime flag)
+    ai_pkg = get(get(get(cfg, "packages", Dict()), "ai", Dict()), "agent", false)
+    ai_rt  = get(get(cfg, "ai_agent", Dict()), "enabled", false)
+    ai = ai_pkg || ai_rt
+
     binaries_to_copy = ["blunux-wizard", "blunux-toml2cal", "blunux-setup"]
     if ai
-        println("  ai_agent.enabled = true → including blunux-ai")
+        println("  ai enabled → including blunux-ai + installer assets")
         push!(binaries_to_copy, "blunux-ai")
     else
-        println("  ai_agent.enabled = false → skipping blunux-ai")
+        println("  ai disabled → skipping blunux-ai")
     end
 
     for bin in binaries_to_copy
@@ -245,6 +251,32 @@ function build_rust()
             println("  Installed $bin → airootfs/usr/bin/")
         else
             @warn "Binary not found: $src"
+        end
+    end
+
+    # Copy AI Agent installer assets into the ISO
+    if ai
+        mkpath(sharedir)
+        mkpath(cardsdir)
+
+        install_script = joinpath(ROOT, "blunux-ai-installer", "install-ai-agent.sh")
+        card_json      = joinpath(ROOT, "blunux-ai-installer", "ai-agent.card.json")
+
+        if isfile(install_script)
+            dst = joinpath(sharedir, "install-ai-agent.sh")
+            cp(install_script, dst, force=true)
+            chmod(dst, 0o755)
+            println("  Installed install-ai-agent.sh → airootfs/usr/share/blunux/")
+        else
+            @warn "install-ai-agent.sh not found: $install_script"
+        end
+
+        if isfile(card_json)
+            dst = joinpath(cardsdir, "ai-agent.card.json")
+            cp(card_json, dst, force=true)
+            println("  Installed ai-agent.card.json → airootfs/usr/share/blunux-installer/cards/")
+        else
+            @warn "ai-agent.card.json not found: $card_json"
         end
     end
 
@@ -311,7 +343,7 @@ function main()
 
     # 3. Build Rust binaries
     if !skip_rust
-        build_rust()
+        build_rust(cfg)
     else
         println("\n── Skipping Rust build (--skip-rust) ──")
     end

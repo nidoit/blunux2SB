@@ -114,3 +114,12 @@ conky = false                    # Conky 시스템 모니터
 vnc = false                      # VNC 원격 데스크톱
 samba = false                    # Samba 파일 공유
 bluetooth = true                 # 블루투스 지원
+
+# AI Agent 설정
+[ai_agent]
+enabled = true                   # AI Agent 포함 여부
+provider = "claude"              # "claude" | "deepseek"
+claude_mode = "oauth"            # "oauth" (Pro/Max 구독) | "api" (토큰 과금)
+whatsapp_enabled = false         # WhatsApp 브리지 (Phase 2 예정)
+language = "auto"                # "auto" (locale에서 감지) | "ko" | "en"
+safe_mode = true                 # 안전 모드 (위험 명령 차단)

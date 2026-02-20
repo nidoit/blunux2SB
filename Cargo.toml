@@ -4,5 +4,6 @@ members = [
     "crates/toml2cal",
     "crates/wizard",
     "crates/setup",
+    "crates/ai-agent",
 ]
 resolver = "2"

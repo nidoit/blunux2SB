@@ -1,94 +1,117 @@
 # PRD: blunux2 — Custom Arch-Based Linux Distribution
 
-**Version:** 1.0  
-**Author:** Jaewoo Joung  
-**Date:** 2026-02-13  
-**Status:** Draft
+**Version:** 1.1
+**Author:** Jaewoo Joung
+**Date:** 2026-02-20
+**Status:** Draft (updated to match actual codebase)
 
 ---
 
 ## 1. Overview
 
-**blunux2** is a custom Linux distribution built on Arch Linux (or Manjaro as a stabilized Arch base). It provides a polished Live OS experience with a graphical installer, pre-configured desktop environment, and curated software stack — targeting users who want an Arch-based system without manual setup complexity.
+**blunux2** is a custom Linux distribution built on Arch Linux. It provides a Live ISO experience with a graphical installer, pre-configured KDE Plasma desktop, and a curated software stack — targeting users who want an Arch-based system without manual setup complexity.
 
-This PRD documents the complete technical architecture of how a Live ISO is built, how the Live OS boots, and how the system is installed to disk.
+The key design principle: a single **`config.toml`** file controls everything. Users edit (or generate) this file, and all tooling reads from it — from the ISO build to the disk installer.
 
 ---
 
 ## 2. Architecture Overview
 
-The system consists of four major subsystems:
-
 ```
-┌─────────────────────────────────────────────────────┐
-│                  blunux2 Distribution                │
-├──────────┬──────────┬───────────┬───────────────────┤
-│ ISO Build│ Live Boot│ Setup     │ Disk Installation │
-│ System   │ System   │ Wizard    │ (Calamares)       │
-├──────────┼──────────┼───────────┼───────────────────┤
-│ Julia    │ GRUB/    │ Rust      │ config.toml →     │
-│ build.jl │ syslinux │ wizard    │ Calamares YAML    │
-│ (dev-side│ initramfs│ binary    │ (auto-translated) │
-│ only, not│ squashfs │ C fallback│ ext4 default      │
-│ in ISO)  │ overlayfs│           │                   │
-└──────────┴──────────┴───────────┴───────────────────┘
-     ↑ Developer machine               ↑ Inside the ISO
+┌─────────────────────────────────────────────────────────────────┐
+│                      blunux2 Distribution                        │
+├──────────────┬──────────────┬──────────────┬────────────────────┤
+│ ISO Build    │ Live Boot    │ AUR Setup    │ Disk Installation  │
+│ System       │ System       │              │ (Calamares)        │
+├──────────────┼──────────────┼──────────────┼────────────────────┤
+│ Julia        │ BIOS:        │ blunux-setup │ config.toml →      │
+│ build.jl     │ syslinux     │ (Rust +      │ blunux-toml2cal →  │
+│ (dev-side    │ UEFI:        │ bash)        │ Calamares YAML     │
+│ only, not    │ systemd-boot │ • yay        │ ext4 default       │
+│ in ISO)      │ initramfs    │ • calamares  │ grub/sd-boot/nmbl  │
+│              │ squashfs     │ • input meth │                    │
+│              │ overlayfs    │              │                    │
+└──────────────┴──────────────┴──────────────┴────────────────────┘
+     ↑ Developer machine                ↑ Inside the ISO
 ```
 
-**Key distinction:** Julia is used only on the **developer's machine** to orchestrate the ISO build process (`build.jl`). It is NOT shipped inside the ISO. The ISO contains only Rust binaries + C fallback.
+**Key distinctions:**
+- Julia runs **only on the developer's machine** to orchestrate the ISO build. It is NOT shipped inside the ISO.
+- The ISO contains four Rust binaries + bash scripts. No Python, no Julia at runtime.
+- The `airootfs/` overlay is **dynamically generated** by `build.jl` — it does not exist statically in the repo.
 
 ---
 
-## 3. Subsystem 1: ISO Build System
-
-### 3.1 Foundation — archiso
-
-The ISO is built using **archiso**, the official Arch Linux ISO creation tool. archiso uses a **profile** directory that defines everything about the ISO.
-
-#### Profile Directory Structure
+## 3. Repository Structure
 
 ```
-blunux2-profile/
-├── profiledef.sh              # Master build configuration
-├── packages.x86_64            # Package list (one per line)
-├── pacman.conf                # Package manager config (repos, mirrors)
-├── airootfs/                  # Root filesystem overlay
-│   ├── etc/
-│   │   ├── mkinitcpio.conf.d/
-│   │   │   └── archiso.conf   # initramfs hooks config
-│   │   ├── mkinitcpio.d/
-│   │   │   └── linux.preset   # Kernel preset for initramfs
-│   │   ├── systemd/system/    # Systemd service enablement
-│   │   ├── skel/              # Default user skeleton files
-│   │   ├── pacman.conf        # Target system pacman.conf
-│   │   ├── hostname
-│   │   ├── locale.conf
-│   │   └── vconsole.conf
-│   ├── root/                  # Root user home in live session
-│   └── usr/
-│       ├── bin/
-│       │   ├── startblunux          # Main live session entry point
-│       │   ├── blunux-wizard        # Setup wizard (Rust binary — hw detect, config, desktop launch)
-│       │   ├── calamares-blunux     # Installer wrapper script
-│       │   └── blunux-toml2cal      # config.toml → Calamares translator (Rust)
-│       ├── share/blunux/
-│       │   ├── livecd/              # Setup wizard assets
-│       │   ├── calamares/           # Installer config templates
-│       │   └── config.toml          # User-facing install configuration
-│       └── lib/calamares/           # Custom Calamares modules
-├── efiboot/                   # UEFI boot configuration
-│   └── loader/
-│       ├── loader.conf
-│       └── entries/
-│           └── blunux.conf
-├── syslinux/                  # BIOS boot configuration
-│   ├── syslinux.cfg
-│   └── splash.png
-└── grub/                      # GRUB configuration (UEFI)
-    └── grub.cfg
+blunux2SB/
+├── config.toml                        # User configuration (single source of truth)
+├── build.jl                           # Julia ISO build orchestrator (dev machine only)
+├── prd.md                             # This document
+├── Cargo.toml                         # Rust workspace (4 crates)
+│
+├── profile/                           # archiso profile (static parts)
+│   ├── profiledef.sh                  #   ISO master config (name, boot modes, squashfs)
+│   ├── pacman.conf                    #   pacman config for ISO build
+│   ├── grub/grub.cfg                  #   GRUB config (for grub bootloader option)
+│   ├── syslinux/syslinux.cfg          #   BIOS boot config
+│   └── efiboot/loader/                #   UEFI systemd-boot config
+│   [airootfs/ is generated by build.jl, not stored in repo]
+│
+├── crates/
+│   ├── blunux-config/                 # Shared config types (library crate)
+│   │   └── src/lib.rs                 #   BlunuxConfig struct, TOML load/save
+│   │
+│   ├── wizard/                        # Live session hardware wizard
+│   │   └── src/
+│   │       ├── main.rs                #   hw detect → locale → keyboard → (optional) desktop
+│   │       └── hwdetect.rs            #   GPU/audio/UEFI/RAM detection via /sys, /proc
+│   │
+│   ├── toml2cal/                      # config.toml → Calamares YAML translator
+│   │   └── src/
+│   │       ├── main.rs                #   CLI: generate, apply-packages, apply-input-method
+│   │       ├── generate.rs            #   9 Calamares YAML generators
+│   │       └── packages.rs            #   bool flags → pacman package names
+│   │
+│   └── setup/                         # AUR package installer + system configurator
+│       └── src/
+│           ├── main.rs                #   yay bootstrap → calamares → packages → input method → services
+│           └── packages.rs            #   bool flags → package names (mirrors toml2cal/packages.rs)
+│
+└── scripts/
+    ├── startblunux                    # Live session entry point (bash)
+    ├── calamares-blunux               # Installer wrapper (bash)
+    └── blunux-setup                   # Bash fallback setup script (also curl-installable)
 ```
 
-### 3.2 profiledef.sh — Master Configuration
+### Rust Workspace (Cargo.toml)
+
+```toml
+[workspace]
+members = [
+    "crates/blunux-config",   # Shared library: BlunuxConfig struct
+    "crates/toml2cal",        # Binary: blunux-toml2cal
+    "crates/wizard",          # Binary: blunux-wizard
+    "crates/setup",           # Binary: blunux-setup
+]
+resolver = "2"
+```
+
+**Build outputs:**
+- `target/release/blunux-wizard` — Hardware wizard (live session)
+- `target/release/blunux-toml2cal` — TOML→Calamares translator (installer)
+- `target/release/blunux-setup` — AUR package installer (live session)
+
+---
+
+## 4. Subsystem 1: ISO Build System
+
+### 4.1 Foundation — archiso
+
+The ISO is built using **archiso** (`mkarchiso`). The `profile/` directory contains static parts of the archiso profile. The dynamic parts (airootfs overlay, packages list) are generated by `build.jl`.
+
+### 4.2 profiledef.sh — Master Configuration
 
 ```bash
 #!/usr/bin/env bash
@@ -101,701 +124,562 @@ iso_version="$(date +%Y.%m.%d)"
 install_dir="arch"
 buildmodes=('iso')
 bootmodes=(
-    'bios.syslinux.mbr'      # Legacy BIOS from MBR
-    'bios.syslinux.eltorito'  # Legacy BIOS from optical
-    'uefi-x64.grub.esp'       # 64-bit UEFI
-    'uefi-x64.grub.eltorito'  # 64-bit UEFI optical
+    'bios.syslinux'        # Legacy BIOS
+    'uefi.systemd-boot'    # UEFI via systemd-boot
 )
 arch="x86_64"
 pacman_conf="pacman.conf"
-airootfs_image_type="squashfs"           # or "erofs" for baseline
+airootfs_image_type="squashfs"
 airootfs_image_tool_options=(
-    '-comp' 'zstd' '-Xcompression-level' '15'  # High compression
-    '-b' '1M'                                    # 1MB block size
+    '-comp' 'zstd' '-Xcompression-level' '15'
+    '-b' '1M'
 )
 file_permissions=(
     ["/etc/shadow"]="0:0:400"
     ["/usr/bin/startblunux"]="0:0:755"
+    ["/usr/bin/blunux-wizard"]="0:0:755"
     ["/usr/bin/calamares-blunux"]="0:0:755"
     ["/usr/bin/blunux-toml2cal"]="0:0:755"
 )
 ```
 
-### 3.3 packages.x86_64 — Package Selection
+**Note:** The ISO uses **systemd-boot for UEFI** (not GRUB). The bootloader used on the *installed system* is separately configured in `config.toml` and can be grub, systemd-boot, or nmbl (EFISTUB).
 
-```
-# ── Base System ──
-base
-linux
-linux-firmware
-linux-headers
-mkinitcpio
-mkinitcpio-archiso
+### 4.3 What build.jl Does
 
-# ── Boot ──
-grub
-efibootmgr
-syslinux
+`build.jl` is a Julia script that runs on the developer's machine. It:
 
-# ── Filesystem ──
-dosfstools
-ntfs-3g
-e2fsprogs
+1. **Reads `config.toml`** — parses all user configuration
+2. **Generates `packages.x86_64`** — maps config booleans to pacman package names
+3. **Generates `airootfs/` overlay** — hostname, locale.conf, vconsole.conf, copies config.toml to `/usr/share/blunux/`
+4. **Builds Rust binaries** — `cargo build --release` → copies `blunux-wizard`, `blunux-toml2cal`, `blunux-setup` into `airootfs/usr/bin/`
+5. **Copies scripts** — `startblunux`, `calamares-blunux` → `airootfs/usr/bin/`
+6. **Calls `mkarchiso`** — standard archiso ISO build
 
-# ── Network ──
-networkmanager
-iwd
-openssh
-
-# ── Desktop Environment ──
-plasma-desktop
-plasma-workspace
-sddm
-kde-applications-meta    # or selective subset
-
-# ── Display ──
-xorg-server
-xorg-xinit
-wayland
-xdg-desktop-portal-kde
-
-# ── Drivers ──
-mesa
-vulkan-radeon
-vulkan-intel
-nvidia-dkms              # Proprietary NVIDIA
-nvidia-utils
-
-# ── Audio ──
-pipewire
-pipewire-pulse
-wireplumber
-
-# ── Fonts ──
-noto-fonts
-noto-fonts-cjk
-noto-fonts-emoji
-ttf-liberation
-
-# ── Installer ──
-calamares
-calamares-extensions
-
-# ── Build Toolchain (Rust + C) ──
-rust                     # Wizard, config translator, hw detect, UI
-gcc                      # C compiler for low-level fallback code
-cmake                    # Build system for C components
-gtk4                     # GTK4 UI library (used via Rust gtk4-rs)
-libadwaita               # Libadwaita for modern GNOME-style widgets
-
-# ── Essential Apps ──
-firefox
-libreoffice-fresh
-konsole
-dolphin
-kate
-git
-base-devel
-
-# ── blunux2 Custom ──
-# (from custom repo or AUR)
-blunux2-settings
-blunux2-livecd           # Setup wizard (Rust binary, no Python)
-blunux2-themes
-blunux2-calamares-config
-blunux2-toml2cal         # config.toml → Calamares YAML translator (Rust)
-```
-
-### 3.4 Build Process
-
-The ISO build is orchestrated by **Julia** (`build.jl`) on the developer's machine. Julia reads `config.toml`, generates the archiso profile, builds the Rust binaries, and calls `mkarchiso`.
-
-#### Local Build (Julia orchestrator)
+#### Build Commands
 
 ```bash
-# Prerequisites: archiso, Julia, Rust
-sudo pacman -S archiso
-
-# Full build — config.toml → profile → Rust binaries → ISO
+# Full build
 julia build.jl
 
-# Profile only (no ISO build, for inspection)
+# Profile only (inspect without building ISO)
 julia build.jl --profile-only
 
-# Skip Rust build (use existing binaries)
+# Skip Rust build (reuse existing binaries)
 julia build.jl --skip-rust
 
-# Output: out/blunux2-YYYY.MM.DD-x86_64.iso
-```
-
-#### What build.jl Does
-
-1. **Reads `config.toml`** — Parses user configuration
-2. **Generates `packages.x86_64`** — Maps config booleans to pacman package names
-3. **Generates airootfs overlay** — hostname, locale.conf, vconsole.conf, copies config.toml
-4. **Builds Rust binaries** — `cargo build --release` → copies `blunux-wizard` and `blunux-toml2cal` into airootfs
-5. **Calls `mkarchiso`** — Standard archiso ISO build from the generated profile
-
-#### Manual Build (without Julia)
-
-```bash
-# If you prefer not to use Julia, you can build manually:
+# Manual build (without Julia)
 cargo build --release
-cp target/release/blunux-{wizard,toml2cal} profile/airootfs/usr/bin/
+cp target/release/blunux-{wizard,toml2cal,setup} profile/airootfs/usr/bin/
 cp scripts/{startblunux,calamares-blunux} profile/airootfs/usr/bin/
 sudo mkarchiso -v -w /tmp/blunux2-work -o out/ profile/
 ```
 
 #### What mkarchiso Does Internally
 
-1. **pacstrap** — Installs all packages from `packages.x86_64` into a working rootfs directory
-2. **Overlay airootfs/** — Copies custom configs over the installed rootfs
-3. **Run mkinitcpio** — Generates initramfs with archiso hooks inside the rootfs
-4. **Create SquashFS** — Compresses the entire rootfs into `airootfs.sfs` (~2-4GB → ~1.5-2.5GB)
-5. **Build ISO image** — Assembles bootloader configs, kernel, initramfs, and squashfs into a hybrid ISO (bootable as both USB and optical)
-
-#### CI/CD Build (GitHub Actions)
-
-```yaml
-name: blunux2_iso_build
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 6 1 * *'  # Monthly builds
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build ISO
-        uses: manjaro/manjaro-iso-action@main  # or custom action
-        with:
-          edition: kde
-          branch: stable
-          scope: full
-
-      - name: Upload ISO
-        uses: actions/upload-artifact@v4
-        with:
-          name: blunux2-iso
-          path: "*.iso"
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            *.iso
-            *.iso.md5
-            *.iso.torrent
-```
+1. **pacstrap** — installs `packages.x86_64` into a working rootfs
+2. **Overlay airootfs/** — copies configs over the installed rootfs
+3. **mkinitcpio** — generates initramfs with archiso hooks
+4. **SquashFS** — compresses rootfs into `airootfs.sfs` (~2-4GB → ~1.5-2.5GB)
+5. **ISO assembly** — bootloaders + kernel + initramfs + squashfs → hybrid ISO
 
 ---
 
-## 4. Subsystem 2: Live Boot Process
+## 5. Subsystem 2: Live Boot Process
 
-### 4.1 Boot Flow (Power-On to Desktop)
+### 5.1 Boot Flow
 
 ```
-┌──────────┐    ┌───────────┐    ┌──────────────┐    ┌────────────┐
-│ Firmware  │───▶│ Bootloader│───▶│  initramfs   │───▶│  systemd   │
-│ BIOS/UEFI│    │ GRUB/     │    │  (archiso    │    │  (PID 1)   │
-│           │    │ syslinux  │    │   hooks)     │    │            │
-└──────────┘    └───────────┘    └──────────────┘    └────────────┘
-                                        │                    │
-                                        ▼                    ▼
-                                 ┌──────────────┐    ┌────────────┐
-                                 │ Mount        │    │ SDDM /     │
-                                 │ squashfs +   │    │ startblunux│
-                                 │ overlayfs    │    │ wizard     │
-                                 └──────────────┘    └────────────┘
-                                                          │
-                                                          ▼
-                                                   ┌────────────┐
-                                                   │  KDE Plasma│
-                                                   │  Desktop   │
-                                                   └────────────┘
+Firmware → Bootloader → initramfs (archiso hooks) → systemd → startblunux
+BIOS:         syslinux
+UEFI:         systemd-boot
+                               ↓
+                    squashfs + overlayfs mounted
+                               ↓
+              SDDM auto-login as liveuser → startblunux
 ```
 
-### 4.2 Stage 1: Firmware → Bootloader
+### 5.2 Boot Modes
 
-**UEFI Path:**
-1. Firmware reads ESP (EFI System Partition) on ISO/USB
-2. Loads `EFI/BOOT/BOOTx64.EFI` (GRUB)
-3. GRUB reads `grub.cfg`
+**UEFI path:**
+1. Firmware reads ESP → loads systemd-boot
+2. systemd-boot reads `loader/entries/blunux.conf`
+3. Boots kernel with archiso parameters
 
-**BIOS Path:**
+**BIOS path:**
 1. Firmware reads MBR → loads syslinux
 2. syslinux reads `syslinux.cfg`
 
-#### GRUB Boot Entry (grub.cfg)
+### 5.3 initramfs — Live Boot Magic
 
-```
-menuentry "blunux2 Live (default)" {
-    set gfxpayload=keep
-    linux /arch/boot/x86_64/vmlinuz-linux
-        archisobasedir=arch
-        archisolabel=BLUNUX2_202602
-        cow_spacesize=4G
-        driver=nonfree
-        quiet splash
-    initrd /arch/boot/x86_64/initramfs-linux.img
-}
+The `archiso` hook in initramfs:
 
-menuentry "blunux2 Live (open-source drivers)" {
-    linux /arch/boot/x86_64/vmlinuz-linux
-        archisobasedir=arch
-        archisolabel=BLUNUX2_202602
-        cow_spacesize=4G
-        driver=free
-        quiet splash
-    initrd /arch/boot/x86_64/initramfs-linux.img
-}
-
-menuentry "blunux2 Live (to RAM)" {
-    linux /arch/boot/x86_64/vmlinuz-linux
-        archisobasedir=arch
-        archisolabel=BLUNUX2_202602
-        copytoram
-        quiet splash
-    initrd /arch/boot/x86_64/initramfs-linux.img
-}
-```
-
-**Key kernel parameters:**
-- `archisobasedir=arch` — Where to find the squashfs on the media
-- `archisolabel=BLUNUX2_202602` — Volume label to identify the boot device
-- `cow_spacesize=4G` — Size of the writable overlay in RAM
-- `copytoram` — Copy entire squashfs to RAM (allows removing USB after boot)
-
-### 4.3 Stage 2: initramfs — The Magic of Live Booting
-
-The initramfs is a small temporary root filesystem loaded into RAM. It contains just enough to find and mount the real root.
-
-#### mkinitcpio Hooks (archiso.conf)
-
-```bash
-HOOKS=(base udev microcode modconf kms memdisk archiso archiso_loop_mnt
-       archiso_pxe_common archiso_pxe_nbd archiso_pxe_http archiso_pxe_nfs
-       block filesystems keyboard)
-```
-
-**Critical hook: `archiso`** — This is where the live boot magic happens:
-
-1. **Find the boot device** — Scans for a device with label `BLUNUX2_202602`
-2. **Mount the boot device** — Mounts the ISO filesystem (ISO 9660 or FAT32)
-3. **Locate squashfs** — Finds `/arch/x86_64/airootfs.sfs`
-4. **Mount squashfs** — Mounts the compressed root image as read-only
-5. **Create overlayfs** — Sets up a layered filesystem:
+1. Finds the boot device by label (`BLUNUX2_YYYYMM`)
+2. Mounts the ISO filesystem
+3. Locates and mounts `airootfs.sfs` (squashfs, read-only)
+4. Creates overlayfs:
 
 ```
 ┌────────────────────────────────┐
 │        overlayfs (merged)      │  ← What the user sees as /
 ├────────────────────────────────┤
-│   upperdir (tmpfs in RAM)      │  ← All writes go here (volatile)
+│   upperdir (tmpfs in RAM)      │  ← All writes (volatile, lost on reboot)
 ├────────────────────────────────┤
 │   lowerdir (squashfs, ro)      │  ← The compressed root image
 └────────────────────────────────┘
 ```
 
-This is the fundamental trick: the squashfs provides a complete read-only root filesystem, and overlayfs layers a writable tmpfs on top. Any file modifications during the live session are stored only in RAM and lost on reboot.
+5. `switch_root` hands control to systemd
 
-### 4.4 Stage 3: systemd Init → Desktop
+### 5.4 Live Session Startup (3-Step Flow)
 
-Once the overlayfs root is assembled and `switch_root` is called:
-
-1. **systemd (PID 1)** starts and reads unit files
-2. **Basic services** — networking, audio, etc.
-3. **Display manager (SDDM)** starts
-4. **Auto-login** — Live session logs in automatically as `liveuser`
-5. **startblunux script** runs — launches the setup wizard
-
-### 4.5 Setup Wizard (First-Run Experience)
-
-The setup wizard is a single **Rust binary** (`blunux-wizard`) — no Python, no Julia, no intermediate layers:
-
-- **Rust** — All logic: hardware detection, config parsing, live session setup, desktop launch
-- **C/C++** — Only used where Rust cannot go (e.g., direct kernel ioctls, legacy library FFI that lacks Rust bindings)
-
-| Component | Language | Responsibility |
-|-----------|----------|---------------|
-| `blunux-wizard` | Rust | Hardware detection, config.toml loading, locale/keyboard setup, exec desktop |
-| `blunux-toml2cal` | Rust | config.toml → Calamares YAML translation |
-| Low-level fallback | C | Kernel-level hardware probing where no Rust crate exists |
-
-#### Wizard Flow
+The live session entry point is `startblunux` (bash), which runs 3 steps in sequence:
 
 ```bash
-# /usr/bin/startblunux (simplified)
-#!/bin/bash
+# /usr/bin/startblunux — simplified
 
-# Rust binary handles everything directly — no Julia, no FFI layers.
-blunux-wizard
+# Step 1: Hardware detection + locale/keyboard setup
+blunux-wizard --no-desktop
 
-# blunux-wizard internally:
-#   1. Detects GPU, audio, UEFI, RAM via /sys and /proc
-#   2. Auto-selects drivers (NVIDIA→proprietary, AMD/Intel→mesa)
-#   3. Loads config.toml
-#   4. Applies locale and keyboard to live session
-#   5. Execs startplasma-wayland (or startplasma-x11 as fallback)
-#
-# Theme: single curated blunux2 theme, no user selection.
-# Drivers: auto-detected, no user selection.
+# Step 2: AUR package installation (calamares, input method, etc.)
+blunux-setup --live --config /usr/share/blunux/config.toml
+
+# Step 3: Launch desktop (bash exec — replaces this process)
+exec startplasma-wayland
 ```
 
-**Key design principle:** All wizard selections are written to `config.toml`. When the user clicks "Install", the Rust-based translator (`blunux-toml2cal`) reads `config.toml` and generates the full set of Calamares YAML configuration files automatically. The user never touches Calamares config directly — `config.toml` is the single source of truth.
+The wizard does **not** exec the desktop directly — it uses `--no-desktop` and the bash script controls the sequence and the final `exec startplasma-wayland`.
 
-### 4.6 config.toml — User-Facing Configuration
+---
 
-The user interacts exclusively with `config.toml` for both the live session wizard and the disk installer. This file is designed to be human-readable and editable, using TOML syntax with Korean comments.
+## 6. Subsystem 3: Rust Crates
+
+### 6.1 blunux-config (shared library)
+
+Defines the `BlunuxConfig` struct that mirrors `config.toml` exactly. All other crates depend on this for type-safe config parsing.
+
+```rust
+pub struct BlunuxConfig {
+    pub blunux: BlunuxMeta,        // version, name
+    pub locale: Locale,            // language, timezone, keyboard
+    pub input_method: InputMethod, // enabled, engine (kime/fcitx5/ibus)
+    pub kernel: Kernel,            // type (linux/linux-lts/linux-zen)
+    pub install: Install,          // bootloader, hostname, username, passwords, encryption, autologin
+    pub disk: Disk,                // swap (none/small/suspend/file)
+    pub packages: Packages,        // desktop, browser, office, development, multimedia,
+                                   // gaming, virtualization, communication, utility
+}
+```
+
+Methods: `BlunuxConfig::load(path)`, `BlunuxConfig::save(path)`.
+
+### 6.2 wizard (blunux-wizard binary)
+
+Runs at live session startup. Terminal-based (no GUI). Supports `--no-desktop` flag.
+
+**Flow:**
+1. **Hardware detection** (`hwdetect.rs`):
+   - GPU: reads `/sys/class/drm/card*/device/vendor` → NVIDIA (0x10de), AMD (0x1002), Intel (0x8086)
+   - Audio: checks `/proc/asound/cards`
+   - UEFI: checks `/sys/firmware/efi`
+   - RAM: reads `/proc/meminfo`
+2. **Load config.toml** from `/usr/share/blunux/config.toml`
+3. **Apply locale** to live session: `localectl set-locale`, `timedatectl set-timezone`
+4. **Apply keyboard** to live session: `localectl set-x11-keymap`
+5. **Desktop exec** — skipped when `--no-desktop` is passed (the bash wrapper handles it)
+
+**Driver auto-selection** (reported at boot, applied during installation via shellprocess):
+- NVIDIA → `nvidia-dkms`, `nvidia-utils`, `lib32-nvidia-utils`, `nvidia-settings`
+- AMD → `mesa`, `vulkan-radeon`, `lib32-mesa`, `lib32-vulkan-radeon`, `xf86-video-amdgpu`
+- Intel → `mesa`, `vulkan-intel`, `lib32-mesa`, `lib32-vulkan-intel`, `intel-media-driver`
+- Unknown → `mesa`
+
+### 6.3 setup (blunux-setup binary)
+
+Runs at live session startup after the wizard. Handles AUR packages and system configuration that requires network and takes time.
+
+**Flow:**
+1. **Bootstrap yay** — if not present, clones `yay-bin` from AUR and builds via `makepkg`
+2. **Live mode (`--live`)** — installs `calamares` and `calamares-extensions` via yay
+3. **Install user packages** — resolves `config.toml [packages.*]` booleans to package names, installs via yay
+4. **Input method setup** — based on `config.toml [input_method]`:
+   - **kime**: installs `kime`, writes `~/.config/kime/config.yaml` (dubeolsik layout), writes `~/.config/autostart/kime.desktop`, writes `/etc/environment.d/input-method.conf`
+   - **fcitx5**: installs fcitx5 + hangul + gtk + qt + configtool, writes environment config
+   - **ibus**: installs ibus + ibus-hangul, writes environment config
+5. **Enable services** — `NetworkManager`, `sddm`, `bluetooth`, `docker` (as applicable via config)
+
+**Bash fallback (`scripts/blunux-setup`):**
+
+A bash script that mirrors the Rust binary's behavior. Used as:
+- Fallback if the compiled binary is unavailable (the bash `startblunux` checks for both)
+- Bootstrap on a fresh Arch install via curl: `curl -sL .../blunux-setup | bash`
+
+### 6.4 toml2cal (blunux-toml2cal binary)
+
+Translates `config.toml` into Calamares YAML configuration files. Called by `calamares-blunux` before launching the installer.
+
+**CLI subcommands:**
+```bash
+# Generate all Calamares YAML configs
+blunux-toml2cal generate \
+    --input config.toml \
+    --output-dir /etc/calamares/modules \
+    --settings /etc/calamares/settings.conf
+
+# Install packages listed in config.toml [packages.*]
+blunux-toml2cal apply-packages --input config.toml
+
+# Configure input method from config.toml [input_method]
+blunux-toml2cal apply-input-method --input config.toml
+```
+
+**Generated files (9 module configs + settings.conf):**
+
+| File | Calamares module | Generated from |
+|------|-----------------|----------------|
+| `settings.conf` | pipeline | bootloader choice, encryption flag |
+| `locale.conf` | locale | `[locale]` language, timezone |
+| `keyboard.conf` | keyboard | `[locale]` keyboard |
+| `partition.conf` | partition | `[disk]` swap, `[install]` encryption |
+| `users.conf` | users | `[install]` username, hostname, autologin |
+| `bootloader.conf` | bootloader | `[install]` bootloader |
+| `unpackfs.conf` | unpackfs | (static) squashfs source path |
+| `shellprocess.conf` | shellprocess | kernel, packages, input method, bootloader |
+| `services-systemd.conf` | services-systemd | desktop, bluetooth, docker flags |
+| `displaymanager.conf` | displaymanager | KDE → sddm, autologin |
+
+**Bootloader logic in `settings.conf` generation:**
+- `grub` → adds `grubcfg` + `bootloader` modules to exec pipeline
+- `systemd-boot` → adds `bootloader` module only
+- `nmbl` (EFISTUB) → skips bootloader module entirely; `shellprocess.conf` handles `efibootmgr`
+
+**Package resolver (`packages.rs`, identical logic in both `toml2cal` and `setup` crates):**
+
+| config.toml key | Resolved packages |
+|----------------|---------|
+| `packages.desktop.kde = true` | plasma-desktop, plasma-workspace, sddm, konsole, dolphin, kate, ark, spectacle, xdg-desktop-portal-kde |
+| `packages.browser.firefox` | firefox |
+| `packages.browser.whale` | naver-whale-bin (AUR) |
+| `packages.browser.chrome` | google-chrome (AUR) |
+| `packages.browser.mullvad` | mullvad-browser-bin (AUR) |
+| `packages.office.libreoffice` | libreoffice-fresh |
+| `packages.office.hoffice` | hoffice-bin (AUR) |
+| `packages.office.texlive` | texlive-core, texlive-latexextra |
+| `packages.development.vscode` | visual-studio-code-bin (AUR) |
+| `packages.development.sublime` | sublime-text-4 (AUR) |
+| `packages.development.rust` | rustup |
+| `packages.development.julia` | julia |
+| `packages.development.nodejs` | nodejs, npm |
+| `packages.development.github_cli` | github-cli |
+| `packages.multimedia.obs` | obs-studio |
+| `packages.multimedia.vlc` | vlc |
+| `packages.multimedia.freetv` | freetuxtv |
+| `packages.multimedia.ytdlp` | yt-dlp |
+| `packages.multimedia.freetube` | freetube-bin (AUR) |
+| `packages.gaming.steam` | steam, lib32-mesa, lib32-vulkan-radeon |
+| `packages.gaming.unciv` | unciv-bin (AUR) |
+| `packages.gaming.snes9x` | snes9x-gtk |
+| `packages.virtualization.docker` | docker, docker-compose |
+| `packages.virtualization.virtualbox` | virtualbox, virtualbox-host-dkms |
+| `packages.communication.teams` | teams-for-linux-bin (AUR) |
+| `packages.communication.whatsapp` | whatsapp-for-linux |
+| `packages.communication.onenote` | p3x-onenote-bin (AUR) |
+| `packages.utility.bluetooth` | bluez, bluez-utils, bluedevil |
+| `packages.utility.vnc` | tigervnc |
+| `packages.utility.samba` | samba, smbclient |
+| `packages.utility.conky` | conky |
+| `kernel.type != "linux"` | `<kernel>`, `<kernel>-headers` |
+
+---
+
+## 7. Subsystem 4: config.toml — Single Source of Truth
+
+`config.toml` is the only file users interact with. It controls both the live session wizard and the disk installer.
 
 ```toml
-# Example: config.toml (abbreviated)
 [blunux]
 version = "2.0"
+name = "my-blunux-build"
 
 [locale]
 language = ["ko_KR"]
 timezone = "Europe/Stockholm"
 keyboard = ["kr", "us"]
 
+[input_method]
+enabled = true
+engine = "kime"              # kime | fcitx5 | ibus
+
+[kernel]
+type = "linux"               # linux | linux-lts | linux-zen
+
 [install]
-bootloader = "nmbl"
+bootloader = "systemd-boot"  # grub | systemd-boot | nmbl
 hostname = "nux"
 username = "blu"
+root_password = "1234"
+user_password = "1234"
 encryption = false
+autologin = true
 
 [disk]
-swap = "small"          # none / small / suspend / file
+swap = "suspend"             # none | small | suspend | file
 
 [packages.desktop]
 kde = true
 
 [packages.browser]
 firefox = true
+whale = false
+chrome = false
+mullvad = false
+
+[packages.office]
+libreoffice = true
+hoffice = false
+texlive = false
+
+[packages.development]
+vscode = true
+sublime = false
+rust = true
+julia = true
+nodejs = true
+github_cli = false
+
+[packages.multimedia]
+obs = false
+vlc = false
+freetv = false
+ytdlp = false
+freetube = false
+
+[packages.gaming]
+steam = false
+unciv = false
+snes9x = false
+
+[packages.virtualization]
+virtualbox = false
+docker = false
+
+[packages.communication]
+teams = false
+whatsapp = false
+onenote = false
+
+[packages.utility]
+conky = false
+vnc = false
+samba = false
+bluetooth = true
 ```
-
-**Design decisions:**
-- **Theme** — Single curated blunux2 theme ships by default. No theme selection in the wizard or config.toml.
-- **Drivers** — Auto-detected at boot by Rust hw-detect (NVIDIA → proprietary, AMD/Intel → mesa). No user selection needed.
-- **Filesystem** — ext4 is the only supported layout (hardcoded in the translator). Chosen for simplicity and stability.
-
-When the user is satisfied with their configuration (either via the GUI wizard or by editing `config.toml` directly), the installation proceeds as follows:
-
-```
-┌─────────────┐     ┌──────────────────┐     ┌───────────────────┐
-│ config.toml │────▶│ blunux-toml2cal   │────▶│ Calamares YAML    │
-│ (user edits)│     │ (Rust translator) │     │ settings.conf     │
-│             │     │                   │     │ partition.conf    │
-│             │     │                   │     │ unpackfs.conf     │
-│             │     │                   │     │ locale.conf       │
-│             │     │                   │     │ users.conf        │
-│             │     │                   │     │ bootloader.conf   │
-└─────────────┘     └──────────────────┘     └───────────────────┘
-                                                      │
-                                                      ▼
-                                              ┌───────────────────┐
-                                              │ Calamares runs     │
-                                              │ standard pipeline  │
-                                              └───────────────────┘
-```
-
-#### Translation Rules (config.toml → Calamares)
-
-The Rust translator (`blunux-toml2cal`) maps TOML sections to Calamares module configs:
-
-| config.toml section | Calamares module | Generated file |
-|---------------------|-----------------|----------------|
-| `[locale]` | locale, keyboard | `locale.conf`, `keyboard.conf` |
-| `[install]` bootloader | bootloader | `bootloader.conf` |
-| `[install]` hostname/username | users | `users.conf` |
-| `[install]` encryption | partition | `partition.conf` (LUKS settings) |
-| `[disk]` swap | partition | `partition.conf` (swap choice) |
-| `[kernel]` | shellprocess | kernel install commands |
-| `[packages.*]` | shellprocess | post-install package list |
-| `[input_method]` | shellprocess | input method setup commands |
-
-This "click-to-install" approach means a user can configure everything in a single TOML file, click install, and the Rust translator handles the rest — no manual Calamares configuration needed.
 
 ---
 
-## 5. Subsystem 3: Disk Installation (Calamares)
+## 8. Subsystem 5: Disk Installation (Calamares)
 
-### 5.1 Calamares Overview
+### 8.1 Installation Flow
 
-**Calamares** is a universal Linux installer framework. It's modular — you configure which modules run and in what order.
-
-In blunux2, users never interact with Calamares configuration directly. Instead, all install preferences are stored in a single **`config.toml`** file. A Rust-based translator (`blunux-toml2cal`) converts this TOML into the full set of Calamares YAML configs at install time. This "click-to-install" approach means the user configures everything in one readable file, clicks install, and the system handles the rest.
-
-### 5.2 Calamares Module Pipeline
-
-```yaml
-# /etc/calamares/settings.conf
-
-modules-search: [ local, /usr/lib/calamares/modules ]
-
-sequence:
-  - show:                    # ── UI Screens ──
-    - welcome               # Language + requirements check
-    - locale                 # Timezone + locale
-    - keyboard               # Keyboard layout
-    - partition              # Disk partitioning
-    - users                  # Username + password
-    - summary                # Review before install
-
-  - exec:                    # ── Installation Steps ──
-    - partition              # Create partitions (ext4 default)
-    - mount                  # Mount target partitions
-    - unpackfs               # Extract squashfs → target disk
-    - machineid              # Generate /etc/machine-id
-    - fstab                  # Generate /etc/fstab
-    - locale                 # Write locale config
-    - keyboard               # Write keyboard config
-    - localecfg              # Write /etc/locale.gen
-    - luksbootkeyfile        # LUKS encryption key
-    - users                  # Create user accounts
-    - displaymanager         # Configure SDDM
-    - networkcfg             # Copy network config
-    - hwclock                # Hardware clock
-    - services-systemd       # Enable systemd services
-    - shellprocess           # Run custom shell scripts
-    - grubcfg                # Generate GRUB config
-    - bootloader             # Install GRUB to disk
-    - umount                 # Unmount everything
-
-  - show:
-    - finished               # "Installation complete" screen
+```
+User edits config.toml
+        │
+        ▼
+calamares-blunux (bash wrapper)
+        │
+        ▼
+blunux-toml2cal generate   →   /etc/calamares/settings.conf
+                           →   /etc/calamares/modules/*.conf (9 files)
+        │
+        ▼
+calamares (GUI installer)
+  show:  welcome → locale → keyboard → partition → users → summary
+  exec:  partition → mount → unpackfs → machineid → fstab → locale
+         → keyboard → localecfg → [luksbootkeyfile] → users
+         → displaymanager → networkcfg → hwclock → services-systemd
+         → shellprocess → [grubcfg] → [bootloader] → umount
+  show:  finished
 ```
 
-### 5.3 The Critical Step: unpackfs (squashfs → disk)
-
-This is the core of installation — extracting the live filesystem to the target disk:
+### 8.2 The Critical Step: unpackfs
 
 ```yaml
-# /etc/calamares/modules/unpackfs.conf
-
+# unpackfs.conf (static — same for all installs)
 unpack:
   - source: /run/miso/bootmnt/arch/x86_64/airootfs.sfs
     sourcefs: squashfs
-    destination: ""  # root of target mount
+    destination: ""
 ```
 
-**What happens internally:**
-1. The squashfs image from the live media is mounted
-2. `rsync` or `unsquashfs` extracts all files to the target partition
-3. Live-session-specific files are excluded (e.g., archiso configs)
-4. User's customizations from the wizard are preserved
+Extracts the live squashfs image to the target disk partition.
 
-### 5.4 Partition Configuration
+### 8.3 Partition Layout
 
-```yaml
-# /etc/calamares/modules/partition.conf
+- EFI partition: 512M at `/boot/efi`
+- Root: ext4 (only supported filesystem — hardcoded in `partition_conf()`)
+- Swap: controlled by `[disk] swap` in config.toml
 
-efiSystemPartition: /boot/efi
-efiSystemPartitionSize: 512M
-efiSystemPartitionName: EFI
+### 8.4 Bootloader Options
 
-defaultFileSystemType: ext4
+| config.toml value | Installed bootloader | Calamares modules used |
+|-------------------|---------------------|-------------------|
+| `grub` | GRUB (BIOS + UEFI) | grubcfg + bootloader |
+| `systemd-boot` | systemd-boot (UEFI only) | bootloader |
+| `nmbl` | None — EFISTUB direct boot via efibootmgr | shellprocess only |
 
-swapChoices:
-  - none
-  - small      # RAM size for hibernation
-  - suspend    # RAM size
-  - file       # Swap file instead of partition
-```
+### 8.5 Post-Install (shellprocess.conf)
 
-### 5.5 config.toml → Calamares Translation (Pre-Install)
+Generated by `blunux-toml2cal` from config.toml contents:
 
-Before Calamares runs, the Rust translator reads the user's `config.toml` and generates all required Calamares YAML configs:
-
-```bash
-# Called by calamares-blunux wrapper script before launching Calamares
-blunux-toml2cal \
-    --input /usr/share/blunux/config.toml \
-    --output-dir /etc/calamares/modules/ \
-    --settings /etc/calamares/settings.conf
-```
-
-The translator is a statically-linked Rust binary (`blunux-toml2cal`) that:
-1. Parses `config.toml` using the `toml` crate
-2. Maps each TOML section to the corresponding Calamares module config
-3. Writes well-formed YAML files (using the `serde_yaml` crate)
-4. Generates `settings.conf` with the correct module pipeline sequence
-
-This means `config.toml` is the only file the user (or the wizard UI) needs to modify. Calamares receives fully-formed YAML and runs its standard pipeline.
-
-### 5.6 Post-Install Scripts (shellprocess)
-
-```yaml
-# /etc/calamares/modules/shellprocess.conf
-# (auto-generated by blunux-toml2cal from config.toml)
-
-script:
-  # Remove live-session packages
-  - command: "chroot $ROOT pacman -Rns --noconfirm mkinitcpio-archiso"
-
-  # Regenerate initramfs for installed system
-  - command: "chroot $ROOT mkinitcpio -P"
-
-  # Enable services
-  - command: "chroot $ROOT systemctl enable sddm NetworkManager bluetooth"
-
-  # Copy live session theme to installed system
-  - command: "cp /home/liveuser/.config/plasma* $ROOT/etc/skel/.config/"
-
-  # Install packages selected in config.toml [packages.*] sections
-  - command: "chroot $ROOT blunux-toml2cal --apply-packages /usr/share/blunux/config.toml"
-
-  # Configure input method from config.toml [input_method]
-  - command: "chroot $ROOT blunux-toml2cal --apply-input-method /usr/share/blunux/config.toml"
-
-  # Clean up
-  - command: "chroot $ROOT pacman -Scc --noconfirm"
-
-  # Set default kernel parameters
-  - command: >
-      sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"/'
-      $ROOT/etc/default/grub
-```
+1. Remove live packages: `pacman -Rns mkinitcpio-archiso`
+2. Install non-default kernel if `kernel.type != "linux"`: `pacman -S <kernel> <kernel>-headers`
+3. Regenerate initramfs: `mkinitcpio -P`
+4. EFISTUB entry if `bootloader = "nmbl"`: `efibootmgr --create ...`
+5. Install user-selected packages: `pacman -S --noconfirm --needed <packages>`
+6. Install input method packages + write `/etc/environment.d/input-method.conf`
+7. Copy live session theme: `cp /home/liveuser/.config/plasma* $ROOT/etc/skel/.config/`
+8. Clean pacman cache: `pacman -Scc`
+9. Set GRUB kernel parameters if `bootloader = "grub"`: `sed -i 's/GRUB_CMDLINE.../` on `/etc/default/grub`
 
 ---
 
-## 6. ISO Image Structure (Final Output)
+## 9. ISO Image Structure
 
 ```
-blunux2-2026.02.13-x86_64.iso
+blunux2-2026.MM.DD-x86_64.iso
 ├── arch/
-│   ├── boot/
-│   │   └── x86_64/
-│   │       ├── vmlinuz-linux          # Linux kernel
-│   │       └── initramfs-linux.img    # initramfs with archiso hooks
+│   ├── boot/x86_64/
+│   │   ├── vmlinuz-linux          # Linux kernel
+│   │   └── initramfs-linux.img    # initramfs with archiso hooks
 │   └── x86_64/
-│       └── airootfs.sfs              # SquashFS compressed root (~2.5GB)
-├── EFI/
-│   └── BOOT/
-│       ├── BOOTx64.EFI              # GRUB EFI binary
-│       └── grub.cfg                  # GRUB config
+│       └── airootfs.sfs           # SquashFS compressed root
+├── loader/                         # systemd-boot config (UEFI)
+│   └── entries/blunux.conf
 ├── syslinux/
-│   ├── syslinux.cfg                 # BIOS boot config
-│   ├── ldlinux.sys                  # Syslinux bootloader
-│   └── splash.png                   # Boot splash screen
-├── boot/
-│   └── grub/
-│       └── grub.cfg                 # Full GRUB config
-└── [El Torito boot catalog]          # For CD/DVD booting
+│   ├── syslinux.cfg               # BIOS boot config
+│   └── splash.png
+└── [El Torito catalog]             # For CD/DVD booting
+```
+
+**Key binaries inside `airootfs.sfs`:**
+```
+/usr/bin/
+├── startblunux          # Live session entry point (bash, 3-step flow)
+├── blunux-wizard        # Hardware detect + locale/keyboard (Rust)
+├── blunux-setup         # AUR installer: yay + calamares + packages + input method (Rust)
+├── blunux-toml2cal      # config.toml → Calamares YAML (Rust)
+└── calamares-blunux     # Installer wrapper: toml2cal → calamares (bash)
+/usr/share/blunux/
+└── config.toml          # User configuration (copied from repo by build.jl)
 ```
 
 ---
 
-## 7. Key Technology Decisions
+## 10. Key Technology Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Base | Arch Linux (or Manjaro) | Rolling release, AUR access, latest packages |
-| ISO tool | archiso + mkarchiso | Official, well-maintained, proven |
-| Compression | SquashFS + zstd | Best compression ratio for live media |
-| Root FS overlay | overlayfs (tmpfs upper) | Standard Linux overlay, volatile by design |
-| Installer | Calamares (via config.toml) | Universal framework, driven by TOML→YAML translation |
-| Install config | config.toml → Calamares YAML | User edits TOML; Rust translator generates Calamares configs |
-| Default FS | ext4 | Simple, stable, battle-tested, universal support |
-| Desktop | KDE Plasma 6 | Highly customizable, Wayland-ready |
+| Base | Arch Linux | Rolling release, AUR access, latest packages |
+| ISO tool | archiso + mkarchiso | Official, well-maintained |
+| Compression | SquashFS + zstd | Best ratio for live media |
+| Root FS overlay | overlayfs (tmpfs upper) | Standard Linux, volatile by design |
+| UEFI bootloader (ISO) | systemd-boot | Lighter than GRUB, modern |
+| BIOS bootloader (ISO) | syslinux | Lightweight, reliable for legacy |
+| Installed system bootloader | grub / systemd-boot / nmbl | User choice in config.toml |
+| Installer | Calamares (config.toml-driven) | Universal framework |
+| Install config | config.toml → Calamares YAML | User edits TOML; Rust generates YAML |
+| Default filesystem | ext4 | Simple, stable, universal |
+| Desktop | KDE Plasma 6 | Wayland-ready, highly customizable |
 | Display manager | SDDM | Native KDE integration |
-| Setup wizard | Rust (`blunux-wizard`) | Hardware detection, config loading, live session setup, desktop launch |
-| Config translator | Rust (`blunux-toml2cal`) | config.toml → Calamares YAML generation |
-| Low-level fallback | C/C++ | Kernel ioctls, legacy library FFI without Rust bindings |
-| UI toolkit | GTK4/Libadwaita (via gtk4-rs) | Modern UI, Rust-native bindings |
-| ISO build orchestrator | Julia (`build.jl`) | Dev-side only — reads config.toml, generates archiso profile, calls mkarchiso |
-| No Python | — | Zero Python dependency (build-side or ISO-side) |
-| No Julia in ISO | — | Julia used only for build orchestration on developer machine |
-| Boot (UEFI) | GRUB | Widest hardware compatibility |
-| Boot (BIOS) | syslinux | Lightweight, reliable for legacy |
-| CI/CD | GitHub Actions | Free for open-source, matrix builds |
-| Package format | Arch packages (PKGBUILD) | AUR compatible, simple packaging |
-| Custom repo | Self-hosted (repo.blunux2.dev) | Host blunux2-specific packages |
+| Hardware wizard | Rust (`blunux-wizard`, terminal) | GPU/audio/UEFI/RAM detect; applies locale/keyboard |
+| AUR installer | Rust (`blunux-setup`) + bash fallback | yay bootstrap, packages, input method config |
+| Config translator | Rust (`blunux-toml2cal`) | config.toml → 9 Calamares YAML files |
+| Shared config types | Rust (`blunux-config`) | Type-safe config parsing shared across all crates |
+| ISO build orchestrator | Julia (`build.jl`) | Dev-side only; config.toml → profile → ISO |
+| AUR helper | yay | Handles both official repos and AUR seamlessly |
+| Input methods | kime (default) / fcitx5 / ibus | Korean input; kime configured with dubeolsik layout |
+| No Python | — | Zero Python dependency at ISO runtime |
+| No Julia in ISO | — | Julia is build-side orchestration only |
 
 ---
 
-## 8. Custom Package Repository
+## 11. Development Workflow
 
-blunux2 will need its own repository for distribution-specific packages:
-
-```
-blunux2-repo/
-├── blunux2-settings/       # Default configs, branding
-│   └── PKGBUILD
-├── blunux2-livecd/         # Live session wizard (Rust binary)
-│   └── PKGBUILD            #   cargo build --release → blunux-wizard
-├── blunux2-toml2cal/       # config.toml → Calamares YAML translator (Rust)
-│   └── PKGBUILD            #   cargo build --release → blunux-toml2cal
-├── blunux2-themes/         # KDE themes, icons, wallpapers
-│   └── PKGBUILD
-├── blunux2-calamares/      # Calamares template configs (generated at install time)
-│   └── PKGBUILD
-├── blunux2-store/          # App store frontend (pamac/bigstore-like)
-│   └── PKGBUILD
-└── blunux2-welcome/        # Post-install welcome app
-    └── PKGBUILD
-```
-
-Add to `pacman.conf`:
-```ini
-[blunux2]
-SigLevel = Optional TrustAll
-Server = https://repo.blunux2.dev/$arch
-```
-
----
-
-## 9. Development Workflow
-
-### 9.1 Local Development Cycle
+### Prerequisites
 
 ```bash
-# 1. Edit profile (packages, airootfs configs, etc.)
-vim blunux2-profile/packages.x86_64
-vim blunux2-profile/airootfs/etc/skel/.config/...
+# Developer machine (Arch-based)
+sudo pacman -S archiso
 
-# 2. Build ISO
-sudo mkarchiso -v -w /tmp/work -o /tmp/out blunux2-profile/
+# Julia (for build.jl)
+julia -e 'using Pkg; Pkg.add("TOML")'
 
-# 3. Test in QEMU
-run_archiso -u -i /tmp/out/blunux2-*.iso   # UEFI mode
-run_archiso -i /tmp/out/blunux2-*.iso       # BIOS mode
-
-# 4. Test on real hardware
-dd bs=4M if=/tmp/out/blunux2-*.iso of=/dev/sdX status=progress
+# Rust (via rustup)
+rustup default stable
 ```
 
-### 9.2 Release Process
+### Build Cycle
 
-1. Tag a version in git
-2. GitHub Actions builds ISO matrix (stable/testing × minimal/full)
-3. ISOs uploaded to GitHub Releases + mirror CDN
-4. Generate `.torrent` files for community distribution
-5. Update website ISO download links
+```bash
+# 1. Edit config.toml
+vim config.toml
+
+# 2. Build ISO (Rust compilation + archiso profile + ISO image)
+julia build.jl
+
+# 3. Test in QEMU
+run_archiso -u -i out/blunux2-*.iso   # UEFI
+run_archiso -i out/blunux2-*.iso       # BIOS
+
+# 4. Flash to USB for real hardware testing
+dd bs=4M if=out/blunux2-*.iso of=/dev/sdX status=progress
+
+# Rust-only development
+cargo check
+cargo build --release
+cargo test
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BLUNUX_WORK` | `/tmp/blunux2-work` | mkarchiso working directory |
+| `BLUNUX_OUT` | `./out` | ISO output directory |
 
 ---
 
-## 10. Future Considerations
+## 12. What Is and Isn't Implemented
 
-- **Persistent live USB** — Allow saving changes across reboots using a secondary partition with ext4
-- **Netboot (PXE)** — archiso already supports PXE boot via the pxe hooks; enable for lab/classroom deployments
-- **ARM64 port** — archiso supports ARM profiles for Raspberry Pi / ARM laptops
-- **Immutable variant** — Consider an immutable/OSTree-based variant for enterprise use
-- **Auto-update ISO** — Script to rebuild ISOs nightly from latest packages
-- **Snapshot integration** — Timeshift integration for rollback
-- **Korean/Swedish locale packs** — Pre-configured CJK input methods and Swedish keyboard layouts
+### Implemented (in codebase)
+
+- `BlunuxConfig` struct with full TOML parsing for all sections and package categories
+- `blunux-wizard`: GPU/audio/UEFI/RAM detection, locale/keyboard apply to live session, `--no-desktop` flag
+- `blunux-toml2cal`: all 9 Calamares YAML generators, all 3 bootloader modes, full package resolver
+- `blunux-setup`: yay bootstrap, calamares install (live mode), package install via yay, kime/fcitx5/ibus full setup (config files + autostart + env vars), service enable
+- `startblunux`: 3-step live session flow (wizard → setup → plasma exec)
+- `calamares-blunux`: toml2cal → calamares launcher
+- `profile/profiledef.sh`: syslinux + systemd-boot boot modes, squashfs/zstd configuration
+- `scripts/blunux-setup`: bash fallback for the Rust binary, also curl-installable on fresh Arch
+- `build.jl`: Julia orchestrator (config.toml → profile generation → Rust build → mkarchiso)
+
+### Not Yet Implemented / Planned
+
+- GUI for `config.toml` editing (currently text-file only)
+- Custom package repository (`repo.blunux2.dev`) for blunux2-specific packages
+- Persistent live USB support (secondary ext4 partition for saving changes)
+- GitHub Actions CI/CD pipeline (monthly ISO builds)
+- ARM64 port
+- Snapshot/Timeshift integration
+- Welcome app / post-install guide
 
 ---
 
-## 11. References
+## 13. References
 
 - [Arch Wiki — archiso](https://wiki.archlinux.org/title/Archiso)
 - [Arch Wiki — mkinitcpio](https://wiki.archlinux.org/title/Mkinitcpio)
 - [Calamares Documentation](https://github.com/calamares/calamares/wiki)
-- [BigLinux LiveCD (reference implementation)](https://github.com/biglinux/biglinux-livecd)
-- [BigLinux Calamares Config](https://github.com/biglinux/calamares-biglinux)
-- [BigLinux ISO Build Action](https://github.com/biglinux/biglinux-iso-action)
+- [kime — Korean input method](https://github.com/Riey/kime)
+- [systemd-boot](https://wiki.archlinux.org/title/Systemd-boot)
 - [ALCI — Arch Linux Calamares Installer](https://alci.online/)
-- [ArchISO Boot Process (DeepWiki)](https://deepwiki.com/archlinux/archiso/4.3-boot-process-flow)

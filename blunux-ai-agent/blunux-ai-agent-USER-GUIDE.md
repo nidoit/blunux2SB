@@ -1,6 +1,6 @@
 # Blunux AI Agent — 사용자 가이드 / User Guide
 
-- **버전 / Version:** 0.1.0
+- **버전 / Version:** 1.0.0
 - **날짜 / Date:** 2026-02-20
 - **언어 / Language:** 한국어 + English
 - **라이선스 / License:** MIT
@@ -25,8 +25,10 @@
 6. [지원 명령 예시](#6-지원-명령-예시)
 7. [메모리 관리](#7-메모리-관리)
 8. [상태 확인](#8-상태-확인)
-9. [보안 안내](#9-보안-안내)
-10. [문제 해결](#10-문제-해결)
+9. [WhatsApp 브릿지](#9-whatsapp-브릿지)
+10. [데몬 모드 & 자동화](#10-데몬-모드--자동화)
+11. [보안 안내](#11-보안-안내)
+12. [문제 해결](#12-문제-해결)
 
 ---
 
@@ -45,6 +47,9 @@ Blunux AI Agent는 자연어로 Linux 시스템을 관리할 수 있게 해주�
 | 안전한 실행 | 위험한 명령은 자동 차단, 중요 명령은 확인 후 실행 |
 | 기억 기능 | 대화 내용과 시스템 정보를 로컬에 저장 |
 | 한국어 지원 | `config.toml`의 언어 설정에 따라 자동 한국어 UI |
+| WhatsApp 원격 관리 | WhatsApp 메시지로 어디서든 리눅스 시스템 제어 |
+| 자동화 스케줄러 | 헬스체크, 보안 업데이트, 디스크 경고 자동 알림 |
+| 데몬 모드 | systemd user service로 24/7 백그라운드 실행 |
 
 ---
 
@@ -91,7 +96,7 @@ blunux-ai setup
 
 ```bash
 blunux-ai --version
-# blunux-ai 0.1.0
+# blunux-ai 1.0.0
 
 blunux-ai status
 # Provider: Claude (API Mode)
@@ -177,7 +182,7 @@ blunux-ai
 실행 화면:
 
 ```
-🤖 Blunux AI Agent v0.1.0
+🤖 Blunux AI Agent v1.0.0
    Claude (claude-sonnet-4-6) | 한국어 모드
    종료: Ctrl+C
 
@@ -328,12 +333,122 @@ blunux-ai status
   MEMORY.md: 0.8 KB
   오늘 로그: 3줄
 
-WhatsApp:   비활성화 (Phase 2 예정)
+자동화:
+  헬스체크:     매일 09:00
+  보안 업데이트: 매주 월요일 09:00
+  디스크 경고:   30분마다
+
+WhatsApp:   비활성화 (설정 마법사에서 활성화 가능)
 ```
 
 ---
 
-## 9. 보안 안내
+## 9. WhatsApp 브릿지
+
+WhatsApp 브릿지를 사용하면 스마트폰에서 WhatsApp 메시지로 리눅스 시스템을 원격 제어할 수 있습니다.
+
+> **⚠️ 주의:** WhatsApp 브릿지는 비공식 API(whatsapp-web.js)를 사용합니다. 메인 번호 대신 전용 WhatsApp 번호 사용을 권장합니다.
+
+### 활성화 방법
+
+`blunux-ai setup` 실행 중 또는 재실행 시 WhatsApp 설정 단계에서 활성화합니다:
+
+```
+[5/6] WhatsApp 브릿지 설정
+
+  ⚠  비공식 API 사용 (whatsapp-web.js) — 전용 번호 권장
+
+  > 건너뛰기 (나중에 설정 가능)
+    WhatsApp 브릿지 활성화
+
+허용할 번호 (쉼표 구분, 빈 칸 = 모두 허용):
+  > +821012345678, +821098765432
+```
+
+### WhatsApp 브릿지 서비스 시작
+
+```bash
+# 브릿지 서비스 시작 (AI Agent 데몬도 자동 시작됨)
+systemctl --user start blunux-wa-bridge
+
+# QR 코드 확인 (첫 실행 시 스캔 필요)
+journalctl --user -u blunux-wa-bridge -f
+
+# 부팅 시 자동 시작
+systemctl --user enable blunux-wa-bridge
+```
+
+### WhatsApp 사용 예시
+
+스마트폰 WhatsApp에서 설정한 번호로 메시지를 보냅니다:
+
+```
+나: 디스크 용량 확인해줘
+
+AI: 📊 디스크 사용량:
+    /dev/sda1  256GB  48GB 사용 (18%)
+    /dev/sda2   50GB   2GB 사용 (4%)
+
+나: SSH 서버 켜줘
+
+AI: systemctl enable --now sshd 실행하시겠습니까? (y/n)
+
+나: y
+
+AI: ✅ sshd 활성화 및 시작 완료
+```
+
+---
+
+## 10. 데몬 모드 & 자동화
+
+### 데몬 서비스 관리
+
+```bash
+# AI Agent 데몬 시작
+systemctl --user start blunux-ai-agent
+
+# 상태 확인
+systemctl --user status blunux-ai-agent
+
+# 로그 확인
+journalctl --user -u blunux-ai-agent -f
+
+# 부팅 시 자동 시작
+systemctl --user enable blunux-ai-agent
+```
+
+### 자동화 커스터마이징
+
+`~/.config/blunux-ai/automations.toml` 편집:
+
+```toml
+[[automations]]
+name    = "daily_health"
+schedule = "0 9 * * *"      # 매일 오전 9시
+action  = "시스템 헬스체크 후 요약 리포트 작성"
+notify  = "whatsapp"
+enabled = true
+
+[[automations]]
+name    = "disk_warning"
+schedule = "*/30 * * * *"   # 30분마다
+action  = "디스크 사용량 90% 초과 시 경고"
+notify  = "whatsapp"
+enabled = true
+```
+
+cron 필드 형식: `분 시 일 월 요일` (`*` = 항상, `*/N` = N마다)
+
+---
+
+## 11. 보안 안내
+
+### 자격증명 보안
+
+- API 키는 `~/.config/blunux-ai/credentials/` 에 저장 (디렉토리: 700, 파일: 600)
+- 로컬에만 저장, 외부 전송 없음
+- AI는 자기 자신의 설정 파일을 수정할 수 없음
 
 ### 명령 실행 권한 모델
 
@@ -355,15 +470,9 @@ Blunux AI Agent는 세 단계의 권한 모델로 안전하게 명령을 실행�
 [2026-02-20T09:17:45Z] BLOCKED    rm -rf /home/blu
 ```
 
-### 자격증명 보안
-
-- API 키는 `~/.config/blunux-ai/credentials/` 에 저장 (권한: 600)
-- 로컬에만 저장, 외부 전송 없음
-- AI는 자기 자신의 설정 파일을 수정할 수 없음
-
 ---
 
-## 10. 문제 해결
+## 12. 문제 해결
 
 ### 문제: API 인증 오류
 
@@ -450,8 +559,10 @@ cat ~/.config/blunux-ai/memory/daily/$(date +%Y-%m-%d).md
 6. [Supported Command Examples](#6-supported-command-examples)
 7. [Memory Management](#7-memory-management)
 8. [Status Check](#8-status-check)
-9. [Security Guide](#9-security-guide)
-10. [Troubleshooting](#10-troubleshooting)
+9. [WhatsApp Bridge](#9-whatsapp-bridge)
+10. [Daemon Mode & Automations](#10-daemon-mode--automations)
+11. [Security Guide](#11-security-guide)
+12. [Troubleshooting](#12-troubleshooting)
 
 ---
 
@@ -470,6 +581,9 @@ Instead of memorizing terminal commands, simply type "install Chrome", "check di
 | Safe execution | Dangerous commands auto-blocked; important commands require confirmation |
 | Memory | Conversation history and system info stored locally |
 | Korean & English | UI language auto-detected from `config.toml` locale settings |
+| WhatsApp remote control | Manage your Linux from anywhere via WhatsApp messages |
+| Automation scheduler | Auto health checks, security updates, disk warnings via WhatsApp |
+| Daemon mode | 24/7 background operation as a systemd user service |
 
 ---
 
@@ -516,7 +630,7 @@ blunux-ai setup
 
 ```bash
 blunux-ai --version
-# blunux-ai 0.1.0
+# blunux-ai 1.0.0
 
 blunux-ai status
 # Provider: Claude (API Mode)
@@ -602,7 +716,7 @@ blunux-ai
 Example session:
 
 ```
-🤖 Blunux AI Agent v0.1.0
+🤖 Blunux AI Agent v1.0.0
    Claude (claude-sonnet-4-6) | English mode
    Exit: Ctrl+C
 
@@ -753,12 +867,116 @@ Memory:
   MEMORY.md: 0.8 KB
   Today's log: 3 lines
 
-WhatsApp:    Disabled (Phase 2 — coming soon)
+Automations:
+  Health check:    Daily at 09:00
+  Security updates: Every Monday at 09:00
+  Disk warning:    Every 30 minutes
+
+WhatsApp:    Disabled (enable during setup wizard)
 ```
 
 ---
 
-## 9. Security Guide
+## 9. WhatsApp Bridge
+
+The WhatsApp bridge lets you control your Linux system remotely via WhatsApp messages from your smartphone.
+
+> **⚠️ Note:** The bridge uses an unofficial API (whatsapp-web.js). Using a dedicated WhatsApp number is strongly recommended to protect your main account.
+
+### Enabling the Bridge
+
+Run `blunux-ai setup` and select "Enable" at the WhatsApp step:
+
+```
+[5/6] WhatsApp Bridge Setup
+
+  ⚠  Uses unofficial API (whatsapp-web.js) — dedicated number recommended
+
+  > Skip (configure later)
+    Enable WhatsApp bridge
+
+Allowed numbers (comma-separated, blank = allow all):
+  > +821012345678, +821098765432
+```
+
+### Starting the WhatsApp Bridge Service
+
+```bash
+# Start the bridge (AI Agent daemon starts automatically)
+systemctl --user start blunux-wa-bridge
+
+# View QR code for first-time pairing
+journalctl --user -u blunux-wa-bridge -f
+
+# Enable auto-start on login
+systemctl --user enable blunux-wa-bridge
+```
+
+### WhatsApp Usage Example
+
+Send messages from your phone to the configured number:
+
+```
+You: Check disk space
+
+AI: 📊 Disk usage:
+    /dev/sda1  256GB  48GB used (18%)
+    /dev/sda2   50GB   2GB used (4%)
+
+You: Enable SSH server
+
+AI: Run: systemctl enable --now sshd — Proceed? (y/n)
+
+You: y
+
+AI: ✅ sshd enabled and started
+```
+
+---
+
+## 10. Daemon Mode & Automations
+
+### Daemon Service Management
+
+```bash
+# Start AI Agent daemon
+systemctl --user start blunux-ai-agent
+
+# Check status
+systemctl --user status blunux-ai-agent
+
+# View live logs
+journalctl --user -u blunux-ai-agent -f
+
+# Enable auto-start on login
+systemctl --user enable blunux-ai-agent
+```
+
+### Customizing Automations
+
+Edit `~/.config/blunux-ai/automations.toml`:
+
+```toml
+[[automations]]
+name     = "daily_health"
+schedule = "0 9 * * *"      # every day at 09:00
+action   = "Run system health check and send a summary report"
+notify   = "whatsapp"
+enabled  = true
+
+[[automations]]
+name     = "disk_warning"
+schedule = "*/30 * * * *"   # every 30 minutes
+action   = "Warn if any disk exceeds 90% usage"
+notify   = "whatsapp"
+enabled  = true
+```
+
+Cron field format: `minute hour day month weekday` (`*` = always, `*/N` = every N)
+
+---
+
+## 11. Security Guide
 
 ### Command Permission Model
 
@@ -782,13 +1000,13 @@ Every executed command is logged to `~/.config/blunux-ai/logs/commands.log`:
 
 ### Credential Security
 
-- API keys are stored in `~/.config/blunux-ai/credentials/` with permissions 600
+- API keys are stored in `~/.config/blunux-ai/credentials/` (directory: 700, files: 600)
 - Stored locally only — never transmitted externally
 - The AI cannot modify its own configuration files
 
 ---
 
-## 10. Troubleshooting
+## 12. Troubleshooting
 
 ### Problem: API Authentication Error
 

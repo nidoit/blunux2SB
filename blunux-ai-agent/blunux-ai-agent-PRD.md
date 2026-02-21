@@ -1,8 +1,8 @@
 # PRD: Blunux AI Agent
 
 **프로젝트명:** Blunux AI Agent  
-**버전:** 0.2.0  
-**작성일:** 2026-02-20  
+**버전:** 1.0.0
+**작성일:** 2026-02-21
 **작성자:** Jaewoo Joung (정재우)  
 **상위 프로젝트:** [blunux2SB](https://github.com/nidoit/blunux2SB)  
 **라이선스:** MIT
@@ -744,50 +744,50 @@ end
 
 ## 10. 개발 로드맵
 
-### Phase 1: Core MVP (v0.1.0) — 4주
+### Phase 1: Core MVP (v0.1.0) ✅ 완료
 
-- [ ] `crates/ai-agent/` Rust crate 생성
-- [ ] Claude API Provider 구현 (reqwest HTTP)
-- [ ] DeepSeek Provider 구현 (reqwest HTTP)
-- [ ] CLI 대화 모드 (`blunux-ai chat`)
-- [ ] 시스템 도구: pacman, systemctl, journalctl 래퍼
-- [ ] 안전장치: 권한 모델, 위험 명령 차단
-- [ ] 메모리 시스템 기본 구현
-- [ ] `blunux-config` crate에 `AiAgent` 필드 추가
+- [x] `crates/ai-agent/` Rust crate 생성
+- [x] Claude API Provider 구현 (reqwest HTTP)
+- [x] DeepSeek Provider 구현 (reqwest HTTP)
+- [x] CLI 대화 모드 (`blunux-ai chat`)
+- [x] 시스템 도구: pacman, systemctl, journalctl 래퍼
+- [x] 안전장치: 권한 모델, 위험 명령 차단
+- [x] 메모리 시스템 기본 구현
+- [x] `blunux-config` crate에 `AiAgent` 필드 추가
 
-### Phase 2: WhatsApp 브릿지 (v0.2.0) — 3주
+### Phase 2: WhatsApp 브릿지 (v0.2.0) ✅ 완료
 
-- [ ] `blunux-whatsapp-bridge/` Node.js 프로젝트 생성
-- [ ] whatsapp-web.js 기반 메시지 수신/발신
-- [ ] QR 코드 스캔 설정 화면
-- [ ] Unix Socket IPC (에이전트 ↔ 브릿지)
-- [ ] WhatsApp 번호 화이트리스트
-- [ ] systemd user service 파일
+- [x] `blunux-whatsapp-bridge/` Node.js 프로젝트 생성
+- [x] whatsapp-web.js 기반 메시지 수신/발신
+- [x] QR 코드 스캔 설정 화면
+- [x] Unix Socket IPC (에이전트 ↔ 브릿지)
+- [x] WhatsApp 번호 화이트리스트
+- [x] systemd user service 파일
 
-### Phase 3: Claude Code OAuth + App Installer 통합 (v0.3.0) — 3주
+### Phase 3: Claude Code OAuth + App Installer 통합 (v0.3.0) ✅ 완료
 
-- [ ] Claude Code OAuth Provider 구현 (subprocess)
-- [ ] `install-ai-agent.sh` 설치 스크립트
-- [ ] App Installer 카드 정의 (ai-agent.card.json)
-- [ ] `blunux-ai setup` 설정 마법사 (TUI)
-- [ ] `build.jl` 수정 (조건부 빌드)
-- [ ] config.toml 통합 테스트
+- [x] Claude Code OAuth Provider 구현 (subprocess)
+- [x] `install-ai-agent.sh` 설치 스크립트
+- [x] App Installer 카드 정의 (ai-agent.card.json)
+- [x] `blunux-ai setup` 설정 마법사 (TUI)
+- [x] `build.jl` 수정 (조건부 빌드)
+- [x] config.toml 통합 테스트
 
-### Phase 4: 자동화 에이전트 (v0.4.0) — 3주
+### Phase 4: 자동화 에이전트 (v0.4.0) ✅ 완료
 
-- [ ] `blunux-ai daemon` 데몬 모드
-- [ ] `automations.toml` 파서 및 스케줄러
-- [ ] WhatsApp 자동 알림 (헬스체크, 업데이트, 디스크)
-- [ ] 일일 리포트 생성
-- [ ] `blunux-ai status` 상태 확인 명령
+- [x] `blunux-ai daemon` 데몬 모드
+- [x] `automations.toml` 파서 및 스케줄러
+- [x] WhatsApp 자동 알림 (헬스체크, 업데이트, 디스크)
+- [x] 일일 리포트 생성
+- [x] `blunux-ai status` 상태 확인 명령
 
-### Phase 5: 안정화 & 배포 (v1.0.0) — 4주
+### Phase 5: 안정화 & 배포 (v1.0.0) ✅ 완료
 
-- [ ] AUR 패키지 생성 (blunux-ai-agent, blunux-wa-bridge)
-- [ ] Blunux ISO 통합 테스트
-- [ ] 한국어/영어 다국어 지원
-- [ ] 문서화 (설치 가이드, 사용법)
-- [ ] 보안 감사 (API 키 관리, 명령 실행 안전장치)
+- [x] AUR 패키지 생성 (blunux-ai-agent, blunux-wa-bridge)
+- [x] Blunux ISO 통합 테스트
+- [x] 한국어/영어 다국어 지원
+- [x] 문서화 (설치 가이드, 사용법)
+- [x] 보안 감사 (API 키 관리, 명령 실행 안전장치)
 
 ### 향후 계획
 

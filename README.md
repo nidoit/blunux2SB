@@ -370,7 +370,7 @@ blunux-ai daemon  (Rust — systemd user service)
 | Phase 2 | v0.2.0 | WhatsApp 브릿지 + 데몬 모드 + Unix IPC | ✅ 완료 |
 | Phase 3 | v0.3.0 | App Installer 카드 + 설정 마법사 WhatsApp 단계 | ✅ 완료 |
 | Phase 4 | v0.4.0 | 자동화 스케줄러 + WhatsApp 자동 알림 | ✅ 완료 |
-| Phase 5 | v1.0.0 | AUR 패키징, ISO 통합 테스트, 보안 감사 | 예정 |
+| Phase 5 | v1.0.0 | AUR 패키징, ISO 통합 테스트, 보안 감사 | ✅ 완료 |
 
 ---
 

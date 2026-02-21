@@ -1,17 +1,17 @@
 # TDD: Blunux AI Agent — Technical Design Document
 
 - **Project:** Blunux AI Agent
-- **Version:** 0.1.0 (Phase 1 — Core MVP)
-- **Date:** 2026-02-20
+- **Version:** 1.0.0 (Phase 1 design — all phases implemented)
+- **Date:** 2026-02-21
 - **Author:** Jaewoo Joung (정재우)
-- **Parent PRD:** blunux-ai-agent-PRD.md v0.2.0
+- **Parent PRD:** blunux-ai-agent-PRD.md v1.0.0
 - **License:** MIT
 
 ---
 
 ## 1. Overview
 
-This document defines the complete Rust technical design for the `crates/ai-agent` crate (Phase 1). It covers module structure, trait interfaces, data types, error hierarchy, CLI commands, and test plan. The WhatsApp bridge and daemon mode (Phase 2) are stubbed with IPC types but not implemented.
+This document defines the Rust technical design for the `crates/ai-agent` crate. It covers module structure, trait interfaces, data types, error hierarchy, CLI commands, and test plan. All five development phases are now complete: the WhatsApp bridge, daemon mode, and automation scheduler (Phases 2–4) are fully implemented; AUR packaging and ISO integration (Phase 5) are shipped.
 
 **Binary name:** `blunux-ai`
 **Crate name:** `ai-agent`

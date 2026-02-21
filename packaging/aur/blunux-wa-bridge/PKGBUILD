@@ -1,0 +1,39 @@
+# Maintainer: Jaewoo Joung <jw@blunux.com>
+pkgname=blunux-wa-bridge
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Blunux WhatsApp Bridge — WhatsApp과 Blunux AI Agent를 연결하는 Node.js 브릿지"
+arch=('any')
+url="https://github.com/nidoit/blunux2SB"
+license=('MIT')
+depends=('nodejs>=18' 'npm' 'blunux-ai-agent')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+b2sums=('SKIP')
+
+prepare() {
+    cd "blunux2SB-$pkgver/blunux-whatsapp-bridge"
+    npm ci --production --ignore-scripts
+}
+
+package() {
+    cd "blunux2SB-$pkgver/blunux-whatsapp-bridge"
+
+    # 애플리케이션 파일
+    install -dm755 "$pkgdir/usr/share/blunux-wa-bridge"
+    cp -r src node_modules package.json \
+        "$pkgdir/usr/share/blunux-wa-bridge/"
+
+    # 실행 스크립트 (launcher wrapper)
+    install -Dm755 /dev/stdin "$pkgdir/usr/bin/blunux-wa-bridge" << 'LAUNCHER'
+#!/bin/bash
+exec /usr/bin/node /usr/share/blunux-wa-bridge/src/index.js "$@"
+LAUNCHER
+
+    # systemd user 서비스
+    install -Dm644 "systemd/blunux-wa-bridge.service" \
+        "$pkgdir/usr/lib/systemd/user/blunux-wa-bridge.service"
+
+    # 라이선스
+    install -Dm644 "../LICENSE" \
+        "$pkgdir/usr/share/licenses/$pkgname/LICENSE" 2>/dev/null || true
+}

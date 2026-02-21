@@ -274,10 +274,19 @@ impl SetupWizard {
         // Save credential
         let cred_dir = self.config_dir.join("credentials");
         std::fs::create_dir_all(&cred_dir).map_err(AgentError::Io)?;
+
+        // Restrict credentials directory to owner-only (rwx------)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&cred_dir, std::fs::Permissions::from_mode(0o700))
+                .map_err(AgentError::Io)?;
+        }
+
         let cred_path = cred_dir.join(provider_name);
         std::fs::write(&cred_path, key.trim()).map_err(AgentError::Io)?;
 
-        // Set file permissions to 600
+        // Set credential file permissions to owner-read-only (rw-------)
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

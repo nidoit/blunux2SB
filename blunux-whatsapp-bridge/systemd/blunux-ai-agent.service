@@ -1,15 +1,23 @@
 [Unit]
 Description=Blunux AI Agent Daemon
-Documentation=https://github.com/blunux/blunux
-After=network.target
+Documentation=https://github.com/nidoit/blunux2SB
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/blunux-ai daemon
+ExecStart=/usr/bin/blunux-ai daemon
 Restart=on-failure
 RestartSec=5s
 
-# Logging
+# 보안 샌드박싱 / Security sandboxing
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=%h/.config/blunux-ai %h/.cache/blunux-ai /run/user/%U
+
+# 로깅 / Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=blunux-ai

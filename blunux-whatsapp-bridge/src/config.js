@@ -73,6 +73,8 @@ function loadConfig() {
         whatsappEnabled: agent.whatsapp_enabled === true,
         allowedNumbers: whatsapp.allowed_numbers || [],
         maxMessagesPerMinute: whatsapp.max_messages_per_minute || 5,
+        requirePrefix: whatsapp.require_prefix === true,
+        sessionTimeout: whatsapp.session_timeout || 3600,
     };
 }
 

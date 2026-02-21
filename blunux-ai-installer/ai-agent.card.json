@@ -1,0 +1,50 @@
+{
+  "id": "blunux-ai-agent",
+  "version": "0.3.0",
+  "category": "ai",
+  "icon": "🤖",
+
+  "name": {
+    "ko": "Blunux AI Agent",
+    "en": "Blunux AI Agent"
+  },
+
+  "summary": {
+    "ko": "Claude / DeepSeek AI로 리눅스 시스템을 관리하세요",
+    "en": "Manage your Linux system with Claude / DeepSeek AI"
+  },
+
+  "description": {
+    "ko": "자연어로 리눅스 시스템을 관리하세요. 패키지 설치, 서비스 관리, 로그 분석 등을 ChatGPT처럼 대화하듯 요청할 수 있습니다.\n\nWhatsApp으로 어디서든 내 리눅스를 원격 관리할 수 있습니다.\n\n포함 내용:\n• Claude (Pro/Max 구독) 또는 DeepSeek (API 키)\n• Claude Code OAuth 지원 — 추가 API 키 불필요\n• WhatsApp 브릿지 — 메시지로 시스템 관리\n• 안전장치 — 위험 명령 자동 차단\n• 메모리 시스템 — 세션 간 컨텍스트 유지",
+    "en": "Manage your Linux system using natural language. Request package installs, service management, log analysis, and more — just like chatting.\n\nControl your Linux remotely from anywhere via WhatsApp.\n\nIncludes:\n• Claude (Pro/Max subscription) or DeepSeek (API key)\n• Claude Code OAuth — no extra API key needed\n• WhatsApp bridge — manage your system by chat\n• Safety layer — dangerous commands blocked automatically\n• Memory system — context preserved between sessions"
+  },
+
+  "tags": ["ai", "claude", "deepseek", "whatsapp", "automation", "system-management", "korean"],
+
+  "install_script": "/usr/share/blunux/install-ai-agent.sh",
+  "uninstall_script": "/usr/share/blunux/install-ai-agent.sh --uninstall",
+
+  "requires": {
+    "packages": ["nodejs", "npm"],
+    "internet": true,
+    "note": {
+      "ko": "Node.js >= 18 필요 (App Installer가 자동 설치)",
+      "en": "Node.js >= 18 required (installed automatically)"
+    }
+  },
+
+  "estimated_size_mb": 250,
+  "estimated_time_min": 5,
+
+  "warnings": {
+    "whatsapp": {
+      "ko": "WhatsApp 연동은 비공식 API(whatsapp-web.js)를 사용합니다. 계정 보호를 위해 전용 WhatsApp 번호 사용을 권장합니다.",
+      "en": "WhatsApp integration uses an unofficial API (whatsapp-web.js). A dedicated WhatsApp number is recommended to protect your main account."
+    }
+  },
+
+  "links": {
+    "docs": "https://github.com/nidoit/blunux2SB/blob/main/blunux-ai-agent/blunux-ai-agent-USER-GUIDE.md",
+    "source": "https://github.com/nidoit/blunux2SB/tree/main/crates/ai-agent"
+  }
+}

@@ -1,9 +1,13 @@
 [package]
 name = "ai-agent"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 description = "Blunux AI Agent — natural language Linux system management"
 license = "MIT"
+
+[lib]
+name = "ai_agent"
+path = "src/lib.rs"
 
 [[bin]]
 name = "blunux-ai"

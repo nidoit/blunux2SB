@@ -49,22 +49,19 @@ impl SetupWizard {
         // Step 4: Model
         let model = self.select_model(&provider)?;
 
-        // Step 5: WhatsApp (Phase 2 notice)
-        println!("\n  {}", strings::setup_whatsapp_coming_soon(&self.lang));
+        // Step 5: WhatsApp bridge setup
+        let (whatsapp_enabled, whatsapp_cfg) = self.setup_whatsapp()?;
 
         // Step 6: Build and save config
         let config = AgentConfig {
             provider,
             claude_mode,
             model,
-            whatsapp_enabled: false,
+            whatsapp_enabled,
             language: self.lang.clone(),
             safe_mode: true,
             config_dir: self.config_dir.clone(),
-            whatsapp: WhatsAppConfig {
-                allowed_numbers: vec![],
-                max_messages_per_minute: 5,
-            },
+            whatsapp: whatsapp_cfg,
         };
         config.save().map_err(AgentError::Config)?;
 
@@ -198,6 +195,68 @@ impl SetupWizard {
 
         println!("  Please ensure you are logged in: claude login");
         Ok(())
+    }
+
+    fn setup_whatsapp(&self) -> Result<(bool, WhatsAppConfig), AgentError> {
+        println!();
+        println!("  {}", strings::setup_whatsapp_title(&self.lang));
+        println!();
+
+        // ToS warning
+        println!("  ⚠  {}", strings::setup_whatsapp_tos(&self.lang));
+        println!();
+
+        let items = vec![
+            strings::setup_whatsapp_skip_label(&self.lang),
+            strings::setup_whatsapp_enable_label(&self.lang),
+        ];
+        let selection = Select::new()
+            .with_prompt(strings::setup_whatsapp_enable_prompt(&self.lang))
+            .items(&items)
+            .default(0)
+            .interact()
+            .map_err(|_| AgentError::UserCancelled)?;
+
+        if selection == 0 {
+            println!("  {}", strings::setup_whatsapp_skipped(&self.lang));
+            return Ok((false, WhatsAppConfig {
+                allowed_numbers: vec![],
+                max_messages_per_minute: 5,
+                require_prefix: false,
+                session_timeout: 3600,
+            }));
+        }
+
+        // Collect allowed phone numbers
+        println!();
+        println!("  {}", strings::setup_whatsapp_phone_hint(&self.lang));
+        let phones_raw: String = Input::new()
+            .with_prompt(strings::setup_whatsapp_phone_prompt(&self.lang))
+            .allow_empty(true)
+            .interact_text()
+            .map_err(|_| AgentError::UserCancelled)?;
+
+        let allowed_numbers: Vec<String> = phones_raw
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        println!("  {}", strings::setup_whatsapp_enabled(&self.lang));
+        if allowed_numbers.is_empty() {
+            println!("  {}", strings::setup_whatsapp_all_numbers(&self.lang));
+        } else {
+            for n in &allowed_numbers {
+                println!("    • {n}");
+            }
+        }
+
+        Ok((true, WhatsAppConfig {
+            allowed_numbers,
+            max_messages_per_minute: 5,
+            require_prefix: false,
+            session_timeout: 3600,
+        }))
     }
 
     fn setup_api_key(&self, provider_name: &str) -> Result<(), AgentError> {

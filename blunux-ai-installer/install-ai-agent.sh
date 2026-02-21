@@ -80,7 +80,7 @@ fi
 
 # ── Build Rust agent ──────────────────────────────────────────────────────────
 info "Building blunux-ai (Rust)..."
-(cd "$REPO_ROOT" && cargo build --release -p blunux-ai 2>&1)
+(cd "$REPO_ROOT" && cargo build --release --bin blunux-ai 2>&1)
 
 BIN="$REPO_ROOT/target/release/blunux-ai"
 if [[ ! -f "$BIN" ]]; then

@@ -20,6 +20,12 @@ pub struct WhatsAppConfig {
     pub allowed_numbers: Vec<String>,
     /// Max messages per minute per user (rate limiting).
     pub max_messages_per_minute: u32,
+    /// If true, messages must start with "/ai " to be treated as commands.
+    /// Useful for group chats where the agent should not respond to everything.
+    pub require_prefix: bool,
+    /// Seconds of inactivity before a user's conversation is reset.
+    /// Default: 3600 (1 hour).
+    pub session_timeout: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -186,6 +192,15 @@ impl AgentConfig {
             .and_then(|v| v.as_integer())
             .map(|v| v as u32)
             .unwrap_or(5);
+        let require_prefix = wa_section
+            .and_then(|s| s.get("require_prefix"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let session_timeout = wa_section
+            .and_then(|s| s.get("session_timeout"))
+            .and_then(|v| v.as_integer())
+            .map(|v| v as u32)
+            .unwrap_or(3600);
 
         Ok(Self {
             provider,
@@ -198,6 +213,8 @@ impl AgentConfig {
             whatsapp: WhatsAppConfig {
                 allowed_numbers,
                 max_messages_per_minute,
+                require_prefix,
+                session_timeout,
             },
         })
     }
@@ -236,11 +253,15 @@ whatsapp_enabled = {whatsapp}
 [whatsapp]
 allowed_numbers = [{allowed_numbers_toml}]
 max_messages_per_minute = {max_mpm}
+require_prefix = {require_prefix}
+session_timeout = {session_timeout}
 "#,
             model = self.model.api_name(),
             safe_mode = self.safe_mode,
             whatsapp = self.whatsapp_enabled,
             max_mpm = self.whatsapp.max_messages_per_minute,
+            require_prefix = self.whatsapp.require_prefix,
+            session_timeout = self.whatsapp.session_timeout,
         );
         let path = self.config_dir.join("config.toml");
         std::fs::write(&path, content).map_err(ConfigError::Io)?;
@@ -309,6 +330,8 @@ mod tests {
             whatsapp: WhatsAppConfig {
                 allowed_numbers: vec![],
                 max_messages_per_minute: 5,
+                require_prefix: false,
+                session_timeout: 3600,
             },
         };
         cfg.save().unwrap();

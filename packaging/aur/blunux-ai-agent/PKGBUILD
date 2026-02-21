@@ -1,0 +1,61 @@
+# Maintainer: Jaewoo Joung <jw@blunux.com>
+pkgname=blunux-ai-agent
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Blunux AI Agent — Claude/DeepSeek AI 기반 Linux 시스템 관리 CLI 및 데몬"
+arch=('x86_64')
+url="https://github.com/nidoit/blunux2SB"
+license=('MIT')
+depends=()
+makedepends=('rust' 'cargo')
+optdepends=(
+    'nodejs: Claude OAuth 모드 사용 시 필요 (npm install -g @anthropic-ai/claude-code)'
+    'blunux-wa-bridge: WhatsApp 브릿지 연동'
+)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+b2sums=('SKIP')
+
+prepare() {
+    cd "blunux2SB-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked \
+        --target "$(rustc -vV | sed -n 's/host: //p')" \
+        --manifest-path crates/ai-agent/Cargo.toml
+}
+
+build() {
+    cd "blunux2SB-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    cargo build --release --locked --bin blunux-ai \
+        --manifest-path crates/ai-agent/Cargo.toml
+}
+
+check() {
+    cd "blunux2SB-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo test --release --locked \
+        --manifest-path crates/ai-agent/Cargo.toml
+}
+
+package() {
+    cd "blunux2SB-$pkgver"
+
+    # 바이너리
+    install -Dm755 "target/release/blunux-ai" \
+        "$pkgdir/usr/bin/blunux-ai"
+
+    # systemd user 서비스
+    install -Dm644 "blunux-whatsapp-bridge/systemd/blunux-ai-agent.service" \
+        "$pkgdir/usr/lib/systemd/user/blunux-ai-agent.service"
+
+    # App Installer 에셋
+    install -Dm755 "blunux-ai-installer/install-ai-agent.sh" \
+        "$pkgdir/usr/share/blunux/install-ai-agent.sh"
+    install -Dm644 "blunux-ai-installer/ai-agent.card.json" \
+        "$pkgdir/usr/share/blunux-installer/cards/ai-agent.card.json"
+
+    # 라이선스
+    install -Dm644 LICENSE \
+        "$pkgdir/usr/share/licenses/$pkgname/LICENSE" 2>/dev/null || true
+}

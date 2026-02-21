@@ -128,6 +128,12 @@ whatsapp_enabled = false         # WhatsApp 브리지 활성화 여부
 language = "auto"                # "auto" (locale에서 감지) | "ko" | "en"
 safe_mode = true                 # 안전 모드 (위험 명령 차단)
 
+# 자동화 에이전트 설정 (세부 설정은 ~/.config/blunux-ai/automations.toml)
+[ai_agent.automations]
+health_check = true              # 일일 시스템 상태 보고 (매일 오전 9시)
+security_updates = true          # 보안 업데이트 알림 (6시간마다)
+disk_warning = true              # 디스크 공간 경고 (매일 자정)
+
 # WhatsApp 브리지 설정 (whatsapp_enabled = true 일 때 적용)
 [whatsapp]
 # 허용된 전화번호 목록 (형식: "+821012345678"). 비어 있으면 모두 허용.

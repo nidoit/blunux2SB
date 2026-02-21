@@ -125,6 +125,23 @@ class IpcClient extends EventEmitter {
         }
     }
 
+    /**
+     * Poll the daemon for pending automation notifications.
+     * Returns an array of {to, body} objects (may be empty).
+     * @returns {Promise<Array<{to: string, body: string}>>}
+     */
+    async pollNotifications() {
+        try {
+            const resp = await this.send(
+                { type: 'action', action: 'poll_notifications', from: '__poll__' },
+                10000
+            );
+            return Array.isArray(resp.notifications) ? resp.notifications : [];
+        } catch {
+            return [];
+        }
+    }
+
     _handleIncoming(msg) {
         if (msg.type !== 'response') return;
         const key = msg.to || '__global__';

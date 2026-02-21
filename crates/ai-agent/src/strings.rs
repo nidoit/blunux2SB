@@ -218,3 +218,40 @@ pub fn setup_whatsapp_skipped(lang: &Language) -> &'static str {
         Language::English => "WhatsApp bridge skipped. Run 'blunux-ai setup' again to configure it later.",
     }
 }
+
+// ── Automation strings ────────────────────────────────────────────────────────
+
+pub fn status_automations_header(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "자동화",
+        Language::English => "Automations",
+    }
+}
+
+pub fn status_automations_count(lang: &Language, n: usize) -> String {
+    match lang {
+        Language::Korean => format!("{n}개 활성화됨"),
+        Language::English => format!("{n} enabled"),
+    }
+}
+
+pub fn status_automations_none(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "설정된 자동화 없음",
+        Language::English => "none configured",
+    }
+}
+
+pub fn status_whatsapp_enabled(lang: &Language, n: usize) -> String {
+    match lang {
+        Language::Korean => format!("활성화 (허용된 번호 {n}개)"),
+        Language::English => format!("Enabled ({n} allowed numbers)"),
+    }
+}
+
+pub fn status_whatsapp_disabled(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "비활성화",
+        Language::English => "Disabled",
+    }
+}

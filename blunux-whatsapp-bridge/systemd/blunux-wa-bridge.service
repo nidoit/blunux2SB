@@ -1,18 +1,26 @@
 [Unit]
 Description=Blunux WhatsApp Bridge
-Documentation=https://github.com/blunux/blunux
-After=network.target blunux-ai-agent.service
+Documentation=https://github.com/nidoit/blunux2SB
+After=network-online.target blunux-ai-agent.service
+Wants=network-online.target
 Requires=blunux-ai-agent.service
 
 [Service]
 Type=simple
-WorkingDirectory=%h/.config/blunux-ai/whatsapp-bridge
-ExecStart=/usr/bin/node /usr/local/lib/blunux-wa-bridge/src/index.js
+ExecStart=/usr/bin/blunux-wa-bridge
+WorkingDirectory=%h/.cache/blunux-wa-bridge
 Restart=on-failure
 RestartSec=10s
 Environment=NODE_ENV=production
 
-# Logging
+# 보안 샌드박싱 / Security sandboxing
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=%h/.cache/blunux-wa-bridge %h/.config/blunux-ai /run/user/%U
+
+# 로깅 / Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=blunux-wa-bridge

@@ -5,6 +5,7 @@
 // both compile from the same source files but as separate compilation units.
 
 pub mod agent;
+pub mod automations;
 pub mod config;
 pub mod daemon;
 pub mod error;

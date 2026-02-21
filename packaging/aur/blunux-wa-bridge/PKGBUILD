@@ -6,13 +6,15 @@ pkgdesc="Blunux WhatsApp Bridge — WhatsApp과 Blunux AI Agent를 연결하는 
 arch=('any')
 url="https://github.com/nidoit/blunux2SB"
 license=('MIT')
-depends=('nodejs>=18' 'npm' 'blunux-ai-agent')
+depends=('nodejs>=18' 'npm' 'chromium' 'blunux-ai-agent')
+optdepends=('google-chrome: alternative Chromium backend for Puppeteer')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 b2sums=('SKIP')
 
 prepare() {
     cd "blunux2SB-$pkgver/blunux-whatsapp-bridge"
-    npm ci --production --ignore-scripts
+    # PUPPETEER_SKIP_DOWNLOAD: use system chromium instead of bundled binary
+    PUPPETEER_SKIP_DOWNLOAD=true npm ci --production --ignore-scripts
 }
 
 package() {
@@ -24,8 +26,11 @@ package() {
         "$pkgdir/usr/share/blunux-wa-bridge/"
 
     # 실행 스크립트 (launcher wrapper)
+    # Sets PUPPETEER_EXECUTABLE_PATH so whatsapp-web.js uses system Chromium
     install -Dm755 /dev/stdin "$pkgdir/usr/bin/blunux-wa-bridge" << 'LAUNCHER'
 #!/bin/bash
+export PUPPETEER_SKIP_DOWNLOAD=true
+export PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 exec /usr/bin/node /usr/share/blunux-wa-bridge/src/index.js "$@"
 LAUNCHER
 

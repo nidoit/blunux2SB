@@ -115,6 +115,7 @@ rp(args...) = joinpath(ROOT, args...)
                     "\"name\"", "\"summary\""]
             @test occursin(key, card_json) "ai-agent.card.json에 $key 없음"
         end
+        @test occursin("\"1.0.0\"", card_json) "ai-agent.card.json version이 1.0.0이 아님"
 
         # 설치 스크립트가 실행 가능한지 확인
         sh = rp("blunux-ai-installer", "install-ai-agent.sh")
@@ -126,6 +127,10 @@ rp(args...) = joinpath(ROOT, args...)
         bridge = rp("blunux-whatsapp-bridge")
 
         @test isfile(joinpath(bridge, "package.json"))
+
+        # package.json version이 1.0.0인지 확인
+        pkg_json = read(joinpath(bridge, "package.json"), String)
+        @test occursin("\"1.0.0\"", pkg_json) "package.json version이 1.0.0이 아님"
 
         for f in ["index.js", "bridge.js", "ipc.js", "config.js"]
             @test isfile(joinpath(bridge, "src", f)) "bridge/src/$f 누락"
@@ -151,7 +156,7 @@ rp(args...) = joinpath(ROOT, args...)
 
             pkgbuild = read(joinpath(pkg_dir, "PKGBUILD"), String)
             @test occursin("pkgname=$pkg",    pkgbuild) "PKGBUILD에 pkgname 없음: $pkg"
-            @test occursin("pkgver=",         pkgbuild) "PKGBUILD에 pkgver 없음: $pkg"
+            @test occursin("pkgver=1.0.0",    pkgbuild) "PKGBUILD pkgver이 1.0.0이 아님: $pkg"
             @test occursin("package()",       pkgbuild) "PKGBUILD에 package() 없음: $pkg"
         end
 
@@ -170,12 +175,19 @@ rp(args...) = joinpath(ROOT, args...)
 
     # ── 9. 문서 ──────────────────────────────────────────────────────────
     @testset "문서" begin
-        @test isfile(rp("README.md")) "README.md 누락"
+        @test isfile(rp("README.md"))     "README.md 누락"
+        @test isfile(rp("prd.md"))        "prd.md 누락"
+        @test isfile(rp("blunux-ai-agent", "blunux-ai-agent-PRD.md"))        "AI Agent PRD 누락"
+        @test isfile(rp("blunux-ai-agent", "blunux-ai-agent-TDD.md"))        "AI Agent TDD 누락"
+        @test isfile(rp("blunux-ai-agent", "blunux-ai-agent-USER-GUIDE.md")) "AI Agent User Guide 누락"
 
         readme = read(rp("README.md"), String)
         for section in ["빌드 방법", "AI Agent", "config.toml", "AUR"]
             @test occursin(section, readme) "README.md에 '$section' 섹션 없음"
         end
+        # Phase 5가 완료 상태인지 확인 (예정이 아닌 완료)
+        @test occursin("Phase 5", readme) "README.md에 Phase 5 로드맵 없음"
+        @test !occursin(r"Phase 5.*예정", readme) "README.md에 Phase 5가 '예정'으로 표시됨 — '완료'로 변경 필요"
     end
 
 end

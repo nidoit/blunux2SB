@@ -217,6 +217,18 @@ impl Agent {
         result
     }
 
+    /// Run a scheduled automation action without a user phone number.
+    /// The action string is treated as a system-initiated instruction to the AI;
+    /// the reply is returned as the notification body.
+    pub async fn run_automation(&mut self, action: &str) -> Result<String, AgentError> {
+        // Use a temporary isolated conversation so automations don't pollute
+        // any active user conversation history.
+        let saved = std::mem::take(&mut self.conversation);
+        let result = self.chat(action).await;
+        self.conversation = saved;
+        result
+    }
+
     fn build_system_prompt(&self) -> Result<String, AgentError> {
         let memory_ctx = self.memory.build_context().map_err(AgentError::Memory)?;
 

@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -5,15 +6,24 @@ use tokio::net::UnixListener;
 use tokio::sync::Mutex;
 
 use crate::agent::Agent;
+use crate::automations::{run_scheduler, AutomationsConfig};
 use crate::config::AgentConfig;
 use crate::error::AgentError;
 use crate::ipc::{socket_path, IpcMessage, IpcMessageType};
+
+/// Pending outbound notifications queued by the automation scheduler.
+/// Each entry is `(phone_number, message_body)`.
+type NotifyQueue = Arc<Mutex<VecDeque<(String, String)>>>;
 
 /// Run the AI agent daemon, listening on a Unix domain socket.
 ///
 /// Incoming messages are newline-delimited JSON `IpcMessage` objects.
 /// For each `Message` type, the agent processes the request and writes
 /// a `Response` message back on the same connection.
+///
+/// A background scheduler task fires automations on their cron schedules and
+/// pushes results to `notify_queue`.  The WhatsApp bridge polls the queue via
+/// the `poll_notifications` IPC action.
 pub async fn run_daemon(config: &AgentConfig) -> Result<(), AgentError> {
     let path = socket_path();
 
@@ -34,14 +44,28 @@ pub async fn run_daemon(config: &AgentConfig) -> Result<(), AgentError> {
 
     eprintln!("[blunux-ai daemon] Listening on {}", path.display());
 
+    // Write default automations.toml if not present
+    let _ = AutomationsConfig::write_defaults(&config.config_dir);
+
     let agent = Arc::new(Mutex::new(Agent::new_daemon(config)?));
+    let notify_queue: NotifyQueue = Arc::new(Mutex::new(VecDeque::new()));
+
+    // Spawn automation scheduler as a background task
+    let sched_agent = Arc::clone(&agent);
+    let sched_queue = Arc::clone(&notify_queue);
+    let sched_wa_cfg = config.whatsapp.clone();
+    let sched_config_dir = config.config_dir.clone();
+    tokio::spawn(async move {
+        run_scheduler(sched_agent, sched_queue, sched_wa_cfg, sched_config_dir).await;
+    });
 
     loop {
         let (stream, _addr) = listener.accept().await.map_err(AgentError::Io)?;
         let agent = Arc::clone(&agent);
+        let queue = Arc::clone(&notify_queue);
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, agent).await {
+            if let Err(e) = handle_connection(stream, agent, queue).await {
                 eprintln!("[blunux-ai daemon] connection error: {e}");
             }
         });
@@ -51,6 +75,7 @@ pub async fn run_daemon(config: &AgentConfig) -> Result<(), AgentError> {
 async fn handle_connection(
     stream: tokio::net::UnixStream,
     agent: Arc<Mutex<Agent>>,
+    notify_queue: NotifyQueue,
 ) -> Result<(), AgentError> {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
@@ -72,7 +97,7 @@ async fn handle_connection(
             }
         };
 
-        let response = process_ipc_message(msg, &agent).await;
+        let response = process_ipc_message(msg, &agent, &notify_queue).await;
         let mut json = serde_json::to_string(&response).unwrap_or_default();
         json.push('\n');
         writer.write_all(json.as_bytes()).await.map_err(AgentError::Io)?;
@@ -84,6 +109,7 @@ async fn handle_connection(
 async fn process_ipc_message(
     msg: IpcMessage,
     agent: &Arc<Mutex<Agent>>,
+    notify_queue: &NotifyQueue,
 ) -> IpcMessage {
     match msg.msg_type {
         IpcMessageType::Message => {
@@ -109,6 +135,7 @@ async fn process_ipc_message(
                     to: Some(phone),
                     actions: None,
                     action: None,
+                    notifications: None,
                     timestamp: Some(utc_now()),
                 },
                 Err(e) => error_response(Some(&phone), &e.to_string()),
@@ -124,6 +151,7 @@ async fn process_ipc_message(
                     to: msg.from.clone(),
                     actions: None,
                     action: None,
+                    notifications: None,
                     timestamp: Some(utc_now()),
                 },
                 "reset" => {
@@ -139,6 +167,33 @@ async fn process_ipc_message(
                         to: msg.from.clone(),
                         actions: None,
                         action: None,
+                        notifications: None,
+                        timestamp: Some(utc_now()),
+                    }
+                }
+                "poll_notifications" => {
+                    // Drain up to 10 pending notifications per poll to avoid
+                    // sending a huge payload in one response.
+                    let mut queue = notify_queue.lock().await;
+                    let take = queue.len().min(10);
+                    let batch: Vec<(String, String)> = queue.drain(..take).collect();
+                    drop(queue);
+
+                    let items: Vec<serde_json::Value> = batch
+                        .into_iter()
+                        .map(|(to, body)| {
+                            serde_json::json!({ "to": to, "body": body })
+                        })
+                        .collect();
+
+                    IpcMessage {
+                        msg_type: IpcMessageType::Response,
+                        from: None,
+                        body: None,
+                        to: msg.from.clone(),
+                        actions: None,
+                        action: None,
+                        notifications: Some(items),
                         timestamp: Some(utc_now()),
                     }
                 }
@@ -159,6 +214,7 @@ fn error_response(to: Option<&str>, reason: &str) -> IpcMessage {
         to: to.map(|s| s.to_string()),
         actions: None,
         action: None,
+        notifications: None,
         timestamp: Some(utc_now()),
     }
 }

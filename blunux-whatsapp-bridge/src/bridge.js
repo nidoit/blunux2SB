@@ -77,6 +77,7 @@ class WhatsAppBridge {
 
         this.client.on('ready', () => {
             console.log('[bridge] WhatsApp client ready');
+            this._startNotificationPoller();
         });
 
         this.client.on('disconnected', (reason) => {
@@ -145,12 +146,46 @@ class WhatsAppBridge {
         }
     }
 
+    /**
+     * Start polling the daemon every 15 seconds for automation notifications.
+     * When the daemon has pending notifications, they are sent via WhatsApp.
+     */
+    _startNotificationPoller() {
+        const POLL_INTERVAL_MS = 15_000;
+
+        const poll = async () => {
+            if (!this.ipc.connected) return;
+            try {
+                const items = await this.ipc.pollNotifications();
+                for (const item of items) {
+                    const phone = item.to;
+                    const body  = item.body || '';
+                    if (!phone || !body) continue;
+
+                    // Format as WhatsApp JID: strip leading + and append @c.us
+                    const jid = phone.replace(/^\+/, '') + '@c.us';
+                    try {
+                        await this.client.sendMessage(jid, body);
+                        console.log(`[bridge] Notification sent to ${phone}: ${body.slice(0, 60)}...`);
+                    } catch (err) {
+                        console.error(`[bridge] Failed to send notification to ${phone}:`, err.message);
+                    }
+                }
+            } catch (err) {
+                console.error('[bridge] Notification poll error:', err.message);
+            }
+        };
+
+        this._pollTimer = setInterval(poll, POLL_INTERVAL_MS);
+    }
+
     /** Strip WhatsApp suffix and non-digits for whitelist comparison. */
     _normalisePhone(from) {
         return from.replace('@c.us', '').replace(/\D/g, '');
     }
 
     async stop() {
+        if (this._pollTimer) clearInterval(this._pollTimer);
         this.ipc.destroy();
         if (this.client) await this.client.destroy();
     }

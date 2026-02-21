@@ -1,9 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// IPC message types for Phase 2 WhatsApp bridge communication.
-/// These types are defined now but the runtime (Unix socket listener)
-/// is not implemented until Phase 2.
-
 pub fn socket_path() -> std::path::PathBuf {
     let uid = std::process::Command::new("id")
         .arg("-u")
@@ -35,6 +31,12 @@ pub struct IpcMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
 
+    /// Outbound notifications from the automation scheduler.
+    /// Each item is `{"to": "+82...", "body": "..."}`.
+    /// Present only in responses to the `poll_notifications` action.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notifications: Option<Vec<serde_json::Value>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
 }
@@ -60,6 +62,7 @@ mod tests {
             to: None,
             actions: None,
             action: None,
+            notifications: None,
             timestamp: Some("2026-02-20T09:00:00Z".into()),
         };
 
@@ -79,11 +82,32 @@ mod tests {
             to: Some("+821012345678".into()),
             actions: Some(vec!["OK".into(), "Show logs".into()]),
             action: None,
+            notifications: None,
             timestamp: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"response\""));
         assert!(json.contains("actions"));
+    }
+
+    #[test]
+    fn test_ipc_notifications_field() {
+        let msg = IpcMessage {
+            msg_type: IpcMessageType::Response,
+            from: None,
+            body: None,
+            to: Some("__poll__".into()),
+            actions: None,
+            action: None,
+            notifications: Some(vec![
+                serde_json::json!({"to": "+821012345678", "body": "헬스체크 결과"}),
+            ]),
+            timestamp: None,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("notifications"));
+        assert!(json.contains("헬스체크"));
     }
 }

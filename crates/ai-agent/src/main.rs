@@ -1,6 +1,7 @@
 use std::io::Write as _;
 
 mod agent;
+mod automations;
 mod config;
 mod daemon;
 mod error;
@@ -15,6 +16,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+use automations::AutomationsConfig;
 use config::{AgentConfig, Language};
 use memory::Memory;
 
@@ -93,7 +95,7 @@ fn run_status(config_dir: &PathBuf, lang: &Language) -> anyhow::Result<()> {
                 }
             };
 
-            println!("\n  Blunux AI Agent Status\n");
+            println!("\n  Blunux AI Agent v{}\n", env!("CARGO_PKG_VERSION"));
             println!("  Provider:    {provider_name}");
             println!("  Model:       {}", cfg.model.display_name());
             println!("  Language:    {lang_name}");
@@ -108,35 +110,43 @@ fn run_status(config_dir: &PathBuf, lang: &Language) -> anyhow::Result<()> {
 
             println!("  Memory:");
             println!(
-                "    SYSTEM.md:  {} bytes",
-                if system.is_empty() {
-                    "empty".into()
-                } else {
-                    format!("{}", system.len())
-                }
+                "    SYSTEM.md:  {}",
+                if system.is_empty() { "empty".into() } else { format!("{} bytes", system.len()) }
             );
             println!(
-                "    USER.md:    {} bytes",
-                if user.is_empty() {
-                    "empty".into()
-                } else {
-                    format!("{}", user.len())
-                }
+                "    USER.md:    {}",
+                if user.is_empty() { "empty".into() } else { format!("{} bytes", user.len()) }
             );
             println!(
-                "    MEMORY.md:  {} bytes",
-                if long_term.is_empty() {
-                    "empty".into()
-                } else {
-                    format!("{}", long_term.len())
-                }
+                "    MEMORY.md:  {}",
+                if long_term.is_empty() { "empty".into() } else { format!("{} bytes", long_term.len()) }
             );
 
-            let whatsapp_status = match lang {
-                Language::Korean => "비활성화 (Phase 2 예정)",
-                Language::English => "Disabled (Phase 2 — coming soon)",
+            // WhatsApp status
+            let wa_str = if cfg.whatsapp_enabled {
+                strings::status_whatsapp_enabled(lang, cfg.whatsapp.allowed_numbers.len())
+            } else {
+                strings::status_whatsapp_disabled(lang).to_string()
             };
-            println!("\n  WhatsApp:    {whatsapp_status}\n");
+            println!("\n  WhatsApp:    {wa_str}");
+
+            // Automations
+            let auto_cfg = AutomationsConfig::load(config_dir);
+            let enabled_count = auto_cfg.automations.iter().filter(|a| a.enabled).count();
+            let auto_str = if enabled_count == 0 {
+                strings::status_automations_none(lang).to_string()
+            } else {
+                strings::status_automations_count(lang, enabled_count)
+            };
+            println!("  {}:  {auto_str}", strings::status_automations_header(lang));
+
+            if enabled_count > 0 {
+                for auto in auto_cfg.automations.iter().filter(|a| a.enabled) {
+                    println!("    • {} [{}]", auto.name, auto.schedule);
+                }
+            }
+
+            println!();
         }
         Err(_) => {
             let msg = match lang {

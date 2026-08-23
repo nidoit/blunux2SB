@@ -10,6 +10,9 @@ pub struct AgentConfig {
     pub whatsapp_enabled: bool,
     pub language: Language,
     pub safe_mode: bool,
+    /// Explicit opt-in: daemon executes privileged actions without asking for
+    /// a WhatsApp confirmation reply first. Default false.
+    pub daemon_auto_confirm: bool,
     pub config_dir: PathBuf,
     pub whatsapp: WhatsAppConfig,
 }
@@ -176,6 +179,11 @@ impl AgentConfig {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        let daemon_auto_confirm = agent
+            .get("daemon_auto_confirm")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         // [whatsapp] section — optional, defaults to empty
         let wa_section = table.get("whatsapp");
         let allowed_numbers: Vec<String> = wa_section
@@ -209,6 +217,7 @@ impl AgentConfig {
             whatsapp_enabled,
             language,
             safe_mode,
+            daemon_auto_confirm,
             config_dir: config_dir.to_path_buf(),
             whatsapp: WhatsAppConfig {
                 allowed_numbers,
@@ -249,6 +258,7 @@ model = "{model}"
 language = "{language_str}"
 safe_mode = {safe_mode}
 whatsapp_enabled = {whatsapp}
+daemon_auto_confirm = {daemon_auto_confirm}
 
 [whatsapp]
 allowed_numbers = [{allowed_numbers_toml}]
@@ -259,6 +269,7 @@ session_timeout = {session_timeout}
             model = self.model.api_name(),
             safe_mode = self.safe_mode,
             whatsapp = self.whatsapp_enabled,
+            daemon_auto_confirm = self.daemon_auto_confirm,
             max_mpm = self.whatsapp.max_messages_per_minute,
             require_prefix = self.whatsapp.require_prefix,
             session_timeout = self.whatsapp.session_timeout,
@@ -326,6 +337,7 @@ mod tests {
             whatsapp_enabled: false,
             language: Language::Korean,
             safe_mode: true,
+            daemon_auto_confirm: false,
             config_dir: tmp.path().to_path_buf(),
             whatsapp: WhatsAppConfig {
                 allowed_numbers: vec![],

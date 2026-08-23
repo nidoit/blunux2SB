@@ -1,8 +1,13 @@
 'use strict';
 
+const crypto = require('crypto');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { IpcClient } = require('./ipc');
+const { persistAllowedNumber } = require('./config');
+
+/** Wrong PAIR-code attempts tolerated before pairing shuts down. */
+const MAX_PAIR_ATTEMPTS = 10;
 
 /**
  * Per-user rate limiter.
@@ -36,6 +41,12 @@ class WhatsAppBridge {
         this.ipc = new IpcClient(config.socketPath);
         this.rateLimiter = new RateLimiter(config.maxMessagesPerMinute);
         this.client = null;
+        /** Digit-only allowed numbers, including ones paired at runtime. */
+        this.allowedNumbers = new Set(
+            config.allowedNumbers.map(n => n.replace(/\D/g, '')).filter(Boolean)
+        );
+        this.pairingCode = null;
+        this.pairAttempts = 0;
     }
 
     async start() {
@@ -77,6 +88,18 @@ class WhatsAppBridge {
 
         this.client.on('ready', () => {
             console.log('[bridge] WhatsApp client ready');
+            if (this.allowedNumbers.size === 0) {
+                this.pairingCode = crypto.randomInt(0, 1_000_000)
+                    .toString()
+                    .padStart(6, '0');
+                console.log('');
+                console.log('┌──────────────────────────────────────────────────────┐');
+                console.log('│  No allowed numbers configured — pairing required.   │');
+                console.log(`│  Send this from YOUR WhatsApp:   PAIR ${this.pairingCode}         │`);
+                console.log('│  Until paired, every sender is denied.               │');
+                console.log('└──────────────────────────────────────────────────────┘');
+                console.log('');
+            }
             this._startNotificationPoller();
         });
 
@@ -99,15 +122,38 @@ class WhatsAppBridge {
 
         if (!body) return;
 
-        // Whitelist check
-        if (this.config.allowedNumbers.length > 0) {
-            const allowed = this.config.allowedNumbers.some(n =>
-                normalised.includes(n.replace(/\D/g, ''))
+        // Whitelist check. An empty list means NOBODY is allowed — the owner
+        // registers their number by sending the PAIR code printed at startup.
+        if (this.allowedNumbers.size === 0) {
+            await this._handlePairing(msg, normalised, body);
+            return;
+        }
+        const configured = [...this.allowedNumbers];
+        const allowed = configured.some(n => normalised.includes(n));
+        if (!allowed) {
+            console.log(
+                `[bridge] Ignored unauthorised number: ${normalised} ` +
+                `(add it to allowed_numbers in config.toml to permit it)`
             );
-            if (!allowed) {
-                console.log(`[bridge] Ignored unauthorised number: ${normalised}`);
-                return;
-            }
+            return;
+        }
+        // Substring matching is deprecated: a future release will require the
+        // full number in allowed_numbers. Warn now so nobody gets locked out.
+        const exact = configured.some(n => normalised === n);
+        if (!exact) {
+            console.warn(
+                `[bridge] DEPRECATION: sender ${normalised} was accepted by partial match only. ` +
+                `Add the full number (with country code) to allowed_numbers — ` +
+                `exact matching will become mandatory in a future release.`
+            );
+        }
+
+        // Command prefix gate ("/ai ...") — enforced when require_prefix = true.
+        let command = body;
+        if (this.config.requirePrefix) {
+            if (!/^\/ai(\s|$)/i.test(body)) return;
+            command = body.replace(/^\/ai\s*/i, '').trim();
+            if (!command) return;
         }
 
         // Rate limit check
@@ -118,7 +164,7 @@ class WhatsAppBridge {
             return;
         }
 
-        console.log(`[bridge] Message from ${normalised}: ${body.slice(0, 80)}`);
+        console.log(`[bridge] Message from ${normalised}: ${command.slice(0, 80)}`);
 
         // Forward to daemon
         try {
@@ -130,7 +176,7 @@ class WhatsAppBridge {
             const response = await this.ipc.send({
                 type: 'message',
                 from: normalised,
-                body,
+                body: command,
                 timestamp: new Date().toISOString(),
             }, 120_000); // 2-minute timeout for long commands
 
@@ -144,6 +190,56 @@ class WhatsAppBridge {
             console.error('[bridge] Error forwarding message:', err.message);
             await msg.reply(`Error: ${err.message}`);
         }
+    }
+
+    /**
+     * Owner pairing: with no allowed numbers configured, the only accepted
+     * message is "PAIR <code>" matching the code printed at startup. The
+     * sender becomes the registered owner (persisted to config.toml).
+     */
+    async _handlePairing(msg, normalised, body) {
+        const m = body.match(/^pair\s+(\d{6})$/i);
+        if (!m) {
+            console.log(
+                `[bridge] Denied ${normalised} — no numbers registered. ` +
+                `Send "PAIR <code>" (see startup log) to register.`
+            );
+            return;
+        }
+        if (!this.pairingCode) {
+            console.log(`[bridge] Pairing attempt from ${normalised} but pairing is not active.`);
+            return;
+        }
+        if (m[1] !== this.pairingCode) {
+            this.pairAttempts += 1;
+            console.warn(
+                `[bridge] Wrong PAIR code from ${normalised} ` +
+                `(attempt ${this.pairAttempts}/${MAX_PAIR_ATTEMPTS})`
+            );
+            if (this.pairAttempts >= MAX_PAIR_ATTEMPTS) {
+                this.pairingCode = null;
+                console.error(
+                    '[bridge] Too many wrong PAIR codes — pairing disabled. ' +
+                    'Restart the bridge to generate a new code.'
+                );
+            }
+            return;
+        }
+
+        this.allowedNumbers.add(normalised);
+        this.pairingCode = null;
+        try {
+            persistAllowedNumber(this.config.configDir, `+${normalised}`);
+            console.log(`[bridge] Paired owner ${normalised} (saved to config.toml)`);
+        } catch (err) {
+            console.error(
+                `[bridge] Paired ${normalised} for this session, but could not save config: ${err.message}`
+            );
+        }
+        await msg.reply(
+            '✅ Paired! This number can now control the Blunux AI agent.\n' +
+            '등록 완료! 이 번호로 Blunux AI 에이전트를 사용할 수 있습니다.'
+        );
     }
 
     /**

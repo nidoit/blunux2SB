@@ -361,7 +361,7 @@ WhatsApp 브릿지를 사용하면 스마트폰에서 WhatsApp 메시지로 리�
   > 건너뛰기 (나중에 설정 가능)
     WhatsApp 브릿지 활성화
 
-허용할 번호 (쉼표 구분, 빈 칸 = 모두 허용):
+허용할 번호 (쉼표 구분, 빈 칸 = 나중에 PAIR 코드로 등록):
   > +821012345678, +821098765432
 ```
 
@@ -895,7 +895,7 @@ Run `blunux-ai setup` and select "Enable" at the WhatsApp step:
   > Skip (configure later)
     Enable WhatsApp bridge
 
-Allowed numbers (comma-separated, blank = allow all):
+Allowed numbers (comma-separated, blank = register later via PAIR code):
   > +821012345678, +821098765432
 ```
 

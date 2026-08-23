@@ -171,6 +171,7 @@ fn test_setup_config_write() {
         whatsapp_enabled: true,
         language: Language::English,
         safe_mode: false,
+        daemon_auto_confirm: true,
         config_dir: tmp.path().to_path_buf(),
         whatsapp: WhatsAppConfig {
             allowed_numbers: vec![
@@ -194,6 +195,10 @@ fn test_setup_config_write() {
     assert!(raw.contains("deepseek"), "raw config should contain provider name");
     assert!(raw.contains("safe_mode = false"), "raw config should reflect safe_mode = false");
     assert!(
+        raw.contains("daemon_auto_confirm = true"),
+        "raw config should reflect daemon_auto_confirm = true"
+    );
+    assert!(
         raw.contains("+821012345678"),
         "raw config should contain first allowed number"
     );
@@ -212,6 +217,10 @@ fn test_setup_config_write() {
     assert_eq!(loaded.model, ModelId::DeepSeekChat);
     assert_eq!(loaded.language, Language::English);
     assert!(!loaded.safe_mode, "safe_mode should be false after round-trip");
+    assert!(
+        loaded.daemon_auto_confirm,
+        "daemon_auto_confirm should be true after round-trip"
+    );
     assert!(loaded.whatsapp_enabled, "whatsapp_enabled should be true after round-trip");
     assert_eq!(
         loaded.whatsapp.allowed_numbers.len(),

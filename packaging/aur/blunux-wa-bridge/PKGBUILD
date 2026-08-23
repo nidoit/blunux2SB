@@ -9,6 +9,8 @@ license=('MIT')
 depends=('nodejs>=18' 'npm' 'chromium' 'blunux-ai-agent')
 optdepends=('google-chrome: alternative Chromium backend for Puppeteer')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+# 릴리스 태그 푸시 후 ../update-checksums.sh 실행해서 실제 값으로 교체할 것.
+# 'SKIP' 상태로 AUR에 올리지 말 것 (tarball 무결성 검증 불가).
 b2sums=('SKIP')
 
 prepare() {

@@ -17,10 +17,13 @@ pub enum SafetyResult {
 pub struct SafetyChecker {
     blocked_patterns: Vec<(Regex, &'static str)>,
     confirm_patterns: Vec<(Regex, &'static str)>,
+    /// When false, RequiresConfirmation is downgraded to Safe (no prompts).
+    /// Blocked patterns are enforced regardless — they are never negotiable.
+    safe_mode: bool,
 }
 
 impl SafetyChecker {
-    pub fn new() -> Self {
+    pub fn new(safe_mode: bool) -> Self {
         let blocked_patterns = vec![
             (
                 Regex::new(r"rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?/\s*$").unwrap(),
@@ -134,13 +137,14 @@ impl SafetyChecker {
         Self {
             blocked_patterns,
             confirm_patterns,
+            safe_mode,
         }
     }
 
     pub fn check(&self, command: &str) -> SafetyResult {
         let trimmed = command.trim();
 
-        // Check blocked patterns first
+        // Check blocked patterns first — enforced even with safe_mode off
         for (pattern, reason) in &self.blocked_patterns {
             if pattern.is_match(trimmed) {
                 return SafetyResult::Blocked {
@@ -150,11 +154,13 @@ impl SafetyChecker {
         }
 
         // Check confirmation patterns
-        for (pattern, reason) in &self.confirm_patterns {
-            if pattern.is_match(trimmed) {
-                return SafetyResult::RequiresConfirmation {
-                    reason: reason.to_string(),
-                };
+        if self.safe_mode {
+            for (pattern, reason) in &self.confirm_patterns {
+                if pattern.is_match(trimmed) {
+                    return SafetyResult::RequiresConfirmation {
+                        reason: reason.to_string(),
+                    };
+                }
             }
         }
 
@@ -167,7 +173,17 @@ mod tests {
     use super::*;
 
     fn checker() -> SafetyChecker {
-        SafetyChecker::new()
+        SafetyChecker::new(true)
+    }
+
+    #[test]
+    fn test_safe_mode_off_skips_confirmation_but_keeps_blocked() {
+        let c = SafetyChecker::new(false);
+        assert!(matches!(c.check("sudo pacman -Syu"), SafetyResult::Safe));
+        assert!(matches!(
+            c.check("rm -rf /"),
+            SafetyResult::Blocked { .. }
+        ));
     }
 
     // Blocked

@@ -260,7 +260,7 @@ disk_warning = true          # 매일 자정 디스크 공간 경고
 
 # WhatsApp 보안 설정
 [whatsapp]
-allowed_numbers = []         # 비어 있으면 모든 번호 허용
+allowed_numbers = []         # 비어 있으면 아무도 허용 안 됨 — PAIR 코드로 본인 번호 등록
 max_messages_per_minute = 5
 require_prefix = false       # true면 "/ai " 접두사 필수 (그룹 채팅 보안용)
 session_timeout = 3600       # 무활동 후 대화 초기화 (초)

@@ -60,6 +60,7 @@ impl SetupWizard {
             whatsapp_enabled,
             language: self.lang.clone(),
             safe_mode: true,
+            daemon_auto_confirm: false,
             config_dir: self.config_dir.clone(),
             whatsapp: whatsapp_cfg,
         };

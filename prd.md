@@ -39,6 +39,7 @@ The key design principle: a single **`config.toml`** file controls everything. U
 - Julia runs **only on the developer's machine** to orchestrate the ISO build. It is NOT shipped inside the ISO.
 - The ISO contains four Rust binaries + bash scripts. No Python, no Julia at runtime.
 - The `airootfs/` overlay is **dynamically generated** by `build.jl` — it does not exist statically in the repo.
+- A fifth Rust binary, **`blunux-ai`** (AI agent), plus the Node.js **WhatsApp bridge** are **optional post-install components** — installed via the App Installer card or AUR, not baked into the live ISO. See Section 13.
 
 ---
 
@@ -49,7 +50,7 @@ blunux2SB/
 ├── config.toml                        # User configuration (single source of truth)
 ├── build.jl                           # Julia ISO build orchestrator (dev machine only)
 ├── prd.md                             # This document
-├── Cargo.toml                         # Rust workspace (4 crates)
+├── Cargo.toml                         # Rust workspace (5 crates)
 │
 ├── profile/                           # archiso profile (static parts)
 │   ├── profiledef.sh                  #   ISO master config (name, boot modes, squashfs)
@@ -74,10 +75,22 @@ blunux2SB/
 │   │       ├── generate.rs            #   9 Calamares YAML generators
 │   │       └── packages.rs            #   bool flags → pacman package names
 │   │
-│   └── setup/                         # AUR package installer + system configurator
-│       └── src/
-│           ├── main.rs                #   yay bootstrap → calamares → packages → input method → services
-│           └── packages.rs            #   bool flags → package names (mirrors toml2cal/packages.rs)
+│   ├── setup/                         # AUR package installer + system configurator
+│   │   └── src/
+│   │       ├── main.rs                #   yay bootstrap → calamares → packages → input method → services
+│   │       └── packages.rs            #   bool flags → package names (mirrors toml2cal/packages.rs)
+│   │
+│   └── ai-agent/                      # blunux-ai binary: AI system management CLI + daemon
+│       └── src/                       #   agent loop, providers (Claude/DeepSeek), tools, safety,
+│                                      #   memory, automations scheduler, Unix-socket IPC daemon
+│
+├── blunux-ai-agent/                   # AI agent docs (PRD, TDD, user guide)
+├── blunux-ai-installer/               # App Installer card + install script for the AI agent
+├── blunux-whatsapp-bridge/            # Node.js bridge: WhatsApp ↔ blunux-ai daemon (IPC)
+│   ├── src/                           #   index/bridge/ipc/config
+│   └── systemd/                       #   user services: blunux-ai-agent, blunux-wa-bridge
+│
+├── packaging/aur/                     # AUR PKGBUILDs: blunux-ai-agent, blunux-wa-bridge
 │
 └── scripts/
     ├── startblunux                    # Live session entry point (bash)
@@ -94,6 +107,7 @@ members = [
     "crates/toml2cal",        # Binary: blunux-toml2cal
     "crates/wizard",          # Binary: blunux-wizard
     "crates/setup",           # Binary: blunux-setup
+    "crates/ai-agent",        # Binary: blunux-ai (optional, post-install)
 ]
 resolver = "2"
 ```
@@ -102,6 +116,7 @@ resolver = "2"
 - `target/release/blunux-wizard` — Hardware wizard (live session)
 - `target/release/blunux-toml2cal` — TOML→Calamares translator (installer)
 - `target/release/blunux-setup` — AUR package installer (live session)
+- `target/release/blunux-ai` — AI agent CLI/daemon (optional; not shipped in the ISO, installed post-install)
 
 ---
 
@@ -662,6 +677,8 @@ cargo test
 - `profile/profiledef.sh`: syslinux + systemd-boot boot modes, squashfs/zstd configuration
 - `scripts/blunux-setup`: bash fallback for the Rust binary, also curl-installable on fresh Arch
 - `build.jl`: Julia orchestrator (config.toml → profile generation → Rust build → mkarchiso)
+- `blunux-ai` (crates/ai-agent): interactive chat + daemon, Claude (API/OAuth) & DeepSeek providers, system tools with safety checks, memory, cron automations scheduler (see Section 13)
+- `blunux-whatsapp-bridge`: WhatsApp ↔ daemon IPC bridge with allowlist + rate limiting; systemd user services; AUR PKGBUILDs for both components
 
 ### Not Yet Implemented / Planned
 
@@ -675,7 +692,38 @@ cargo test
 
 ---
 
-## 13. References
+## 13. Subsystem 6: AI Agent & WhatsApp Bridge (Optional)
+
+Optional post-install components — **not shipped inside the live ISO**. Installed via the App Installer card (`blunux-ai-installer/ai-agent.card.json`) or AUR (`packaging/aur/`).
+
+### 13.1 blunux-ai (crates/ai-agent)
+
+Natural-language Linux system management CLI and daemon.
+
+- **Providers:** Claude (API mode or OAuth mode) and DeepSeek. Note: in OAuth mode, tool execution is disabled (chat only) — the CLI warns about this in `status` and at daemon startup.
+- **Tools:** package management (pacman/yay), service control (systemctl), system info, arbitrary commands — gated by a `SafetyChecker` (blocked / requires-confirmation / allowed).
+- **Memory:** `SYSTEM.md` / `USER.md` / `MEMORY.md` + daily logs under `~/.config/blunux-ai/`.
+- **Daemon mode:** Unix domain socket (`/run/user/<uid>/blunux-ai.sock`, mode 0600), newline-delimited JSON IPC; runs a cron-based automations scheduler that queues outbound notifications.
+- **Config:** `~/.config/blunux-ai/config.toml` (`[agent]` + `[whatsapp]` sections); the OS-level `config.toml` has `[ai_agent]` / `[whatsapp]` sections consumed at install time.
+
+### 13.2 blunux-whatsapp-bridge (Node.js)
+
+Bridges WhatsApp Web (whatsapp-web.js/Puppeteer) to the `blunux-ai` daemon over the IPC socket.
+
+- Inbound: individual-chat messages → allowlist check (`allowed_numbers`) → rate limit → forwarded to daemon → reply.
+- Outbound: polls the daemon every 15s for automation notifications and delivers them via WhatsApp.
+- Runs as a systemd user service (`blunux-wa-bridge.service`), alongside `blunux-ai-agent.service`.
+
+### 13.3 Security model
+
+- **Deny-by-default allowlist:** an empty `allowed_numbers` allows *nobody*. The owner registers by sending the one-time `PAIR <code>` shown in the bridge startup log (max 10 wrong attempts, then pairing shuts down until restart). Paired numbers are persisted to config.toml.
+- **Deferred confirmation:** in daemon mode, privileged actions (sudo, package install/remove, service changes, arbitrary commands) are *not* executed immediately — the user receives a confirmation request over WhatsApp and must reply "yes"/"네" within 5 minutes. Hard-blocked commands (disk wipes, /etc/passwd writes, fork bombs, …) are never executable, confirmed or not. Setting `daemon_auto_confirm = true` in the agent config restores the old auto-approve behaviour as an explicit opt-in.
+- `safe_mode` is enforced by the SafetyChecker (off = skip confirmations, but blocked patterns still apply); `require_prefix` gates messages behind "/ai " when enabled; `session_timeout` resets idle conversations.
+- Remaining known gap: bridge allowlist matching for numbers listed in config.toml is still substring-based for backward compatibility (a deprecation warning is logged); exact matching becomes mandatory in a future release.
+
+---
+
+## 14. References
 
 - [Arch Wiki — archiso](https://wiki.archlinux.org/title/Archiso)
 - [Arch Wiki — mkinitcpio](https://wiki.archlinux.org/title/Mkinitcpio)

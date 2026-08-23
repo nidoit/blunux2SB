@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 
 use crate::agent::Agent;
 use crate::automations::{run_scheduler, AutomationsConfig};
-use crate::config::AgentConfig;
+use crate::config::{AgentConfig, ClaudeMode, ProviderType};
 use crate::error::AgentError;
 use crate::ipc::{socket_path, IpcMessage, IpcMessageType};
 
@@ -43,6 +43,13 @@ pub async fn run_daemon(config: &AgentConfig) -> Result<(), AgentError> {
     }
 
     eprintln!("[blunux-ai daemon] Listening on {}", path.display());
+
+    if config.provider == ProviderType::Claude && config.claude_mode == ClaudeMode::OAuth {
+        eprintln!(
+            "[blunux-ai daemon] {}",
+            crate::strings::oauth_tools_warning(&config.language)
+        );
+    }
 
     // Write default automations.toml if not present
     let _ = AutomationsConfig::write_defaults(&config.config_dir);

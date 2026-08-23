@@ -78,4 +78,44 @@ function loadConfig() {
     };
 }
 
-module.exports = { loadConfig };
+/**
+ * Persist a newly paired phone number into config.toml's [whatsapp]
+ * allowed_numbers so it survives bridge restarts.
+ * Numbers are stored in the documented "+821012345678" format.
+ */
+function persistAllowedNumber(configDir, number) {
+    const configPath = path.join(configDir, 'config.toml');
+    let content = '';
+    try {
+        content = fs.readFileSync(configPath, 'utf8');
+    } catch {
+        // No config yet — create a minimal one holding just this setting.
+    }
+
+    if (/^allowed_numbers *=/m.test(content)) {
+        content = content.replace(
+            /^allowed_numbers *= *\[([^\]]*)\]/m,
+            (_full, inner) => {
+                const existing = inner
+                    .split(',')
+                    .map(s => s.trim().replace(/^["']|["']$/g, ''))
+                    .filter(Boolean);
+                if (!existing.includes(number)) existing.push(number);
+                return `allowed_numbers = [${existing.map(n => `"${n}"`).join(', ')}]`;
+            }
+        );
+    } else if (/^\[whatsapp\]\s*$/m.test(content)) {
+        content = content.replace(
+            /^\[whatsapp\]\s*$/m,
+            `[whatsapp]\nallowed_numbers = ["${number}"]`
+        );
+    } else {
+        if (content && !content.endsWith('\n')) content += '\n';
+        content += `\n[whatsapp]\nallowed_numbers = ["${number}"]\n`;
+    }
+
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(configPath, content);
+}
+
+module.exports = { loadConfig, persistAllowedNumber };

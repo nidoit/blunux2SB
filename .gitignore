@@ -1,1 +1,5 @@
 /target/
+/out/
+/profile/airootfs/
+/profile/packages.x86_64
+node_modules/

@@ -102,6 +102,12 @@ fn run_status(config_dir: &PathBuf, lang: &Language) -> anyhow::Result<()> {
             println!("  Safe Mode:   {safe_str}");
             println!("  Config:      {}\n", config_dir.display());
 
+            if cfg.provider == config::ProviderType::Claude
+                && cfg.claude_mode == config::ClaudeMode::OAuth
+            {
+                println!("  {}\n", strings::oauth_tools_warning(lang));
+            }
+
             // Memory stats
             let mem = Memory::new(config_dir.clone());
             let system = mem.load_system().unwrap_or_default();

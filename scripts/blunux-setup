@@ -55,11 +55,27 @@ if command -v blunux-setup-bin &>/dev/null; then
 fi
 
 # ── TOML parser (simple key=value, unique keys) ────────────────────────────
+# Values may carry inline comments ("enabled = true  # 설명") — strip them,
+# or boolean comparisons silently fail.
 toml_get() {
-    grep "^$1 *=" "$CONFIG" 2>/dev/null | head -1 | sed 's/^[^=]*= *//' | tr -d '"'
+    grep "^$1 *=" "$CONFIG" 2>/dev/null | head -1 \
+        | sed -e 's/^[^=]*= *//' -e 's/ *#.*$//' -e 's/ *$//' | tr -d '"'
 }
 toml_bool() {
     [[ "$(toml_get "$1")" == "true" ]]
+}
+# Section-scoped lookup. Keys like "enabled" exist in more than one section
+# ([input_method] and [ai_agent]), so a file-wide grep would return whichever
+# happens to come first in the file.
+toml_get_in() {
+    awk -v sec="[$1]" -v key="$2" '
+        index($0, sec) == 1      { insec = 1; next }
+        insec && /^\[/           { exit }
+        insec && $0 ~ "^" key " *=" {
+            sub(/^[^=]*= */, ""); sub(/ *#.*$/, ""); gsub(/"/, ""); sub(/ *$/, "")
+            print; exit
+        }
+    ' "$CONFIG" 2>/dev/null
 }
 
 # ── Sanity checks ──────────────────────────────────────────────────────────
@@ -151,8 +167,8 @@ if [[ ${#PKGS[@]} -gt 0 ]]; then
 fi
 
 # ── 4. Input method ───────────────────────────────────────────────────────
-ENGINE=$(toml_get "engine")
-if [[ "$(toml_get "enabled")" == "true" ]]; then
+ENGINE=$(toml_get_in "input_method" "engine")
+if [[ "$(toml_get_in "input_method" "enabled")" == "true" ]]; then
     echo "── Configuring input method: $ENGINE ──"
 
     case "$ENGINE" in

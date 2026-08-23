@@ -186,8 +186,8 @@ pub fn setup_whatsapp_enable_label(lang: &Language) -> &'static str {
 
 pub fn setup_whatsapp_phone_hint(lang: &Language) -> &'static str {
     match lang {
-        Language::Korean => "허용할 전화번호를 입력하세요 (형식: +821012345678, 쉼표로 구분, 비워두면 모두 허용)",
-        Language::English => "Enter allowed phone numbers (format: +821012345678, comma-separated, empty = allow all)",
+        Language::Korean => "허용할 전화번호를 입력하세요 (형식: +821012345678, 쉼표로 구분, 비워두면 나중에 PAIR 코드로 등록)",
+        Language::English => "Enter allowed phone numbers (format: +821012345678, comma-separated, empty = register later via PAIR code)",
     }
 }
 
@@ -207,8 +207,8 @@ pub fn setup_whatsapp_enabled(lang: &Language) -> &'static str {
 
 pub fn setup_whatsapp_all_numbers(lang: &Language) -> &'static str {
     match lang {
-        Language::Korean => "(모든 번호 허용 — 보안을 위해 번호를 지정하는 것을 권장합니다)",
-        Language::English => "(all numbers allowed — specifying numbers is recommended for security)",
+        Language::Korean => "(등록된 번호 없음 — 브릿지 시작 시 표시되는 PAIR 코드를 WhatsApp으로 보내 본인 번호를 등록하세요. 등록 전에는 아무 번호도 허용되지 않습니다.)",
+        Language::English => "(no numbers registered — send the PAIR code shown at bridge startup via WhatsApp to register your number. Until then, no sender is allowed.)",
     }
 }
 
@@ -253,5 +253,39 @@ pub fn status_whatsapp_disabled(lang: &Language) -> &'static str {
     match lang {
         Language::Korean => "비활성화",
         Language::English => "Disabled",
+    }
+}
+
+// ── WhatsApp deferred-confirmation strings ────────────────────────────────────
+
+pub fn wa_confirm_request(lang: &Language, items: &str) -> String {
+    match lang {
+        Language::Korean => format!(
+            "⚠️ 확인이 필요한 작업입니다:\n{items}\n\n실행하려면 5분 안에 \"네\" 또는 \"yes\"라고 답장하세요. 취소하려면 \"아니요\"."
+        ),
+        Language::English => format!(
+            "⚠️ This action needs your confirmation:\n{items}\n\nReply \"yes\" within 5 minutes to run it, or \"no\" to cancel."
+        ),
+    }
+}
+
+pub fn wa_confirm_expired(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "확인 요청이 만료되었습니다(5분 경과). 실행하려면 처음부터 다시 요청해주세요.",
+        Language::English => "The confirmation request has expired (5 minutes passed). Please make the request again from the start.",
+    }
+}
+
+pub fn wa_confirm_approved(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "(사용자가 실행을 승인함)",
+        Language::English => "(user approved execution)",
+    }
+}
+
+pub fn oauth_tools_warning(lang: &Language) -> &'static str {
+    match lang {
+        Language::Korean => "⚠️  Claude OAuth 모드에서는 시스템 관리 도구(패키지 설치, 서비스 제어, 명령 실행 등)가 동작하지 않고 일반 대화만 가능합니다. 도구를 사용하려면 'blunux-ai setup'에서 Claude API 모드 또는 DeepSeek로 전환하세요.",
+        Language::English => "⚠️  In Claude OAuth mode, system management tools (package install, service control, command execution) are disabled — chat only. Run 'blunux-ai setup' and switch to Claude API mode or DeepSeek to enable tools.",
     }
 }

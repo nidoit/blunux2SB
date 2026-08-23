@@ -136,7 +136,8 @@ disk_warning = true              # 디스크 공간 경고 (매일 자정)
 
 # WhatsApp 브리지 설정 (whatsapp_enabled = true 일 때 적용)
 [whatsapp]
-# 허용된 전화번호 목록 (형식: "+821012345678"). 비어 있으면 모두 허용.
+# 허용된 전화번호 목록 (형식: "+821012345678"). 비어 있으면 아무도 허용되지 않으며,
+# 브릿지 시작 시 표시되는 PAIR 코드를 보내 본인 번호를 등록합니다.
 allowed_numbers = []
 # 사용자당 분당 최대 메시지 수 (속도 제한)
 max_messages_per_minute = 5

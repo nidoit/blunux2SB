@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
+use std::time::{Duration, Instant};
 
 use crate::config::{AgentConfig, Language};
 use crate::error::AgentError;
@@ -12,6 +13,31 @@ use crate::tools::{PermissionLevel, SafetyChecker, SafetyResult, ToolRegistry};
 
 const MAX_TOOL_LOOP_ITERATIONS: usize = 10;
 const MAX_TOKENS: u32 = 4096;
+/// How long a WhatsApp confirmation request stays valid.
+const CONFIRM_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// How confirmation prompts are resolved.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ConfirmMode {
+    /// CLI chat: ask on stdin.
+    Interactive,
+    /// Daemon with `daemon_auto_confirm = true`: execute without asking.
+    AutoApprove,
+    /// Daemon default: don't execute — ask the user to reply YES over WhatsApp.
+    Deferred,
+}
+
+/// A privileged tool call waiting for the user's WhatsApp confirmation.
+struct PendingAction {
+    tool_name: String,
+    input: serde_json::Value,
+    description: String,
+}
+
+struct PendingSet {
+    actions: Vec<PendingAction>,
+    created: Instant,
+}
 
 pub struct Agent {
     provider: Box<dyn Provider>,
@@ -22,8 +48,17 @@ pub struct Agent {
     /// Per-user conversation history for daemon mode (keyed by phone number).
     user_conversations: HashMap<String, Vec<Message>>,
     lang: Language,
-    /// When true, skip interactive confirmation prompts (daemon / WhatsApp mode).
-    auto_confirm: bool,
+    safe_mode: bool,
+    confirm_mode: ConfirmMode,
+    /// Deferred confirmations per user (daemon mode).
+    pending_confirmations: HashMap<String, PendingSet>,
+    /// User whose message is currently being processed (daemon mode).
+    current_user: Option<String>,
+    /// Set inside the tool loop when an action was deferred this turn.
+    deferred_question: Option<String>,
+    /// Per-user inactivity cutoff before conversation history is reset.
+    session_timeout: Duration,
+    last_activity: HashMap<String, Instant>,
 }
 
 impl Agent {
@@ -31,7 +66,7 @@ impl Agent {
         let provider = build_provider(config).map_err(AgentError::Config)?;
         let tools = ToolRegistry::default_tools();
         let memory = Memory::new(config.config_dir.clone());
-        let safety = SafetyChecker::new();
+        let safety = SafetyChecker::new(config.safe_mode);
 
         Ok(Self {
             provider,
@@ -41,14 +76,28 @@ impl Agent {
             conversation: Vec::new(),
             user_conversations: HashMap::new(),
             lang: config.language.clone(),
-            auto_confirm: false,
+            safe_mode: config.safe_mode,
+            confirm_mode: ConfirmMode::Interactive,
+            pending_confirmations: HashMap::new(),
+            current_user: None,
+            deferred_question: None,
+            session_timeout: Duration::from_secs(u64::from(config.whatsapp.session_timeout)),
+            last_activity: HashMap::new(),
         })
     }
 
-    /// Create an agent configured for daemon / WhatsApp mode (auto-confirms all prompts).
+    /// Create an agent configured for daemon / WhatsApp mode.
+    ///
+    /// Privileged actions are NOT auto-approved: the user gets a confirmation
+    /// request over WhatsApp and must reply YES within 5 minutes. Setting
+    /// `daemon_auto_confirm = true` in config.toml restores auto-approval.
     pub fn new_daemon(config: &AgentConfig) -> Result<Self, AgentError> {
         let mut agent = Self::new(config)?;
-        agent.auto_confirm = true;
+        agent.confirm_mode = if config.daemon_auto_confirm {
+            ConfirmMode::AutoApprove
+        } else {
+            ConfirmMode::Deferred
+        };
         Ok(agent)
     }
 
@@ -93,6 +142,14 @@ impl Agent {
                     let tool_results = self.process_tool_calls(&result).await?;
                     if !tool_results.is_empty() {
                         self.conversation.push(Message::tool_results(tool_results));
+                    }
+                    // Deferred mode: an action needs the user's WhatsApp
+                    // confirmation. Stop here and return the question instead
+                    // of letting the model continue.
+                    if let Some(question) = self.deferred_question.take() {
+                        self.conversation.push(Message::assistant_text(question.clone()));
+                        let _ = self.memory.append_today(&format!("AI: {question}"));
+                        return Ok(question);
                     }
                     // Continue loop for next completion
                 }
@@ -199,6 +256,36 @@ impl Agent {
         phone: &str,
         user_message: &str,
     ) -> Result<String, AgentError> {
+        // Session timeout: reset stale conversations (and any stale pending
+        // confirmation with them) after `session_timeout` of inactivity.
+        let now = Instant::now();
+        if let Some(last) = self.last_activity.get(phone) {
+            if now.duration_since(*last) > self.session_timeout {
+                self.user_conversations.remove(phone);
+                self.pending_confirmations.remove(phone);
+            }
+        }
+        self.last_activity.insert(phone.to_string(), now);
+
+        // A confirmation is pending for this user: interpret the reply.
+        if let Some(set) = self.pending_confirmations.remove(phone) {
+            let reply = user_message.trim().to_lowercase();
+            if set.created.elapsed() > CONFIRM_TIMEOUT {
+                if is_affirmative(&reply) {
+                    // Too late — require a fresh request instead of running
+                    // a possibly forgotten action.
+                    return Ok(strings::wa_confirm_expired(&self.lang).to_string());
+                }
+                // Unrelated/negative message: silently drop the stale request.
+            } else if is_affirmative(&reply) {
+                return self.execute_pending(phone, set).await;
+            } else if is_negative(&reply) {
+                self.record_exchange(phone, user_message, strings::cancelled(&self.lang));
+                return Ok(strings::cancelled(&self.lang).to_string());
+            }
+            // Any other message implicitly cancels and is handled normally.
+        }
+
         // Restore per-user conversation
         let mut conv = self
             .user_conversations
@@ -207,14 +294,54 @@ impl Agent {
 
         // Swap in the user's conversation
         std::mem::swap(&mut self.conversation, &mut conv);
+        self.current_user = Some(phone.to_string());
 
         let result = self.chat(user_message).await;
 
         // Swap back and store
+        self.current_user = None;
         std::mem::swap(&mut self.conversation, &mut conv);
         self.user_conversations.insert(phone.to_string(), conv);
 
         result
+    }
+
+    /// Execute a confirmed pending action set and report the results.
+    async fn execute_pending(
+        &mut self,
+        phone: &str,
+        set: PendingSet,
+    ) -> Result<String, AgentError> {
+        let mut outputs = Vec::new();
+        for action in set.actions {
+            let tool = match self.tools.get(&action.tool_name) {
+                Some(t) => t,
+                None => continue,
+            };
+            let _ = self.memory.log_command("CONFIRMED", &action.description);
+            match tool.execute(action.input).await {
+                Ok(out) => outputs.push(format!("✅ {}\n{}", action.description, out)),
+                Err(e) => {
+                    let _ = self.memory.log_command("FAILED", &action.description);
+                    outputs.push(format!("❌ {}: {e}", action.description));
+                }
+            }
+        }
+        let reply = if outputs.is_empty() {
+            strings::cancelled(&self.lang).to_string()
+        } else {
+            outputs.join("\n\n")
+        };
+        self.record_exchange(phone, strings::wa_confirm_approved(&self.lang), &reply);
+        Ok(reply)
+    }
+
+    /// Append a user/assistant exchange to a user's stored history so the
+    /// model keeps context about what actually happened.
+    fn record_exchange(&mut self, phone: &str, user_text: &str, assistant_text: &str) {
+        let conv = self.user_conversations.entry(phone.to_string()).or_default();
+        conv.push(Message::user(user_text));
+        conv.push(Message::assistant_text(assistant_text));
     }
 
     /// Run a scheduled automation action without a user phone number.
@@ -238,6 +365,7 @@ impl Agent {
         };
 
         let tool_names: Vec<String> = self.tools.definitions().iter().map(|t| t.name.clone()).collect();
+        let safe_mode_str = if self.safe_mode { "enabled" } else { "disabled" };
 
         Ok(format!(
             "You are Blunux AI Agent, a Linux system management assistant for Blunux (Arch-based).\n\
@@ -245,7 +373,7 @@ impl Agent {
              {lang_instruction}\n\
              \n\
              Available tools: {tool_list}\n\
-             Safe mode: enabled\n\
+             Safe mode: {safe_mode_str}\n\
              \n\
              Rules:\n\
              - Use the provided tools to execute system commands\n\
@@ -260,13 +388,16 @@ impl Agent {
     }
 
     async fn process_tool_calls(
-        &self,
+        &mut self,
         result: &CompletionResult,
     ) -> Result<Vec<ContentBlock>, AgentError> {
         let mut tool_results = Vec::new();
 
         for (id, name, input) in result.tool_uses() {
-            let tool_result = self.execute_tool(id, name, input.clone()).await?;
+            let id = id.to_string();
+            let name = name.to_string();
+            let input = input.clone();
+            let tool_result = self.execute_tool(&id, &name, input).await?;
             tool_results.push(tool_result);
         }
 
@@ -274,13 +405,13 @@ impl Agent {
     }
 
     async fn execute_tool(
-        &self,
+        &mut self,
         tool_use_id: &str,
         name: &str,
         input: serde_json::Value,
     ) -> Result<ContentBlock, AgentError> {
-        let tool = match self.tools.get(name) {
-            Some(t) => t,
+        let permission = match self.tools.get(name) {
+            Some(t) => t.permission_level(),
             None => {
                 return Ok(ContentBlock::ToolResult {
                     tool_use_id: tool_use_id.to_string(),
@@ -298,7 +429,7 @@ impl Agent {
         };
 
         // Check permission level
-        match tool.permission_level() {
+        match permission {
             PermissionLevel::Safe => {
                 // Auto-execute
             }
@@ -320,6 +451,15 @@ impl Agent {
                         SafetyResult::RequiresConfirmation { reason } => {
                             let description =
                                 strings::confirm_command(&self.lang, cmd);
+                            if self.confirm_mode == ConfirmMode::Deferred {
+                                return Ok(self.defer_action(
+                                    tool_use_id,
+                                    name,
+                                    input,
+                                    &description,
+                                    &reason,
+                                ));
+                            }
                             println!("\n  {description}");
                             println!("  ({reason})");
                             if !self.prompt_confirmation() {
@@ -333,9 +473,18 @@ impl Agent {
                         }
                         SafetyResult::Safe => {}
                     }
-                } else {
+                } else if self.safe_mode {
                     // Non-run_command tool requiring confirmation
                     let description = strings::tool_executing(&self.lang, name);
+                    if self.confirm_mode == ConfirmMode::Deferred {
+                        return Ok(self.defer_action(
+                            tool_use_id,
+                            name,
+                            input,
+                            &description,
+                            "",
+                        ));
+                    }
                     println!("\n  {description}");
                     if !self.prompt_confirmation() {
                         let _ = self.memory.log_command("CANCELLED", name);
@@ -359,6 +508,10 @@ impl Agent {
 
         // Execute the tool
         let log_cmd = command_str.as_deref().unwrap_or(name);
+        let tool = match self.tools.get(name) {
+            Some(t) => t,
+            None => unreachable!("tool existence checked above"),
+        };
         match tool.execute(input).await {
             Ok(output) => {
                 let status = if tool.permission_level() == PermissionLevel::Safe {
@@ -384,8 +537,61 @@ impl Agent {
         }
     }
 
+    /// Queue a privileged action for WhatsApp confirmation instead of
+    /// executing it, and prepare the confirmation question for the user.
+    /// Returns the tool_result block recording that nothing was executed.
+    fn defer_action(
+        &mut self,
+        tool_use_id: &str,
+        name: &str,
+        input: serde_json::Value,
+        description: &str,
+        reason: &str,
+    ) -> ContentBlock {
+        // Automation runs have no user to ask — the action is simply skipped
+        // and reported as not executed.
+        if let Some(phone) = self.current_user.clone() {
+            let desc = if reason.is_empty() {
+                description.to_string()
+            } else {
+                format!("{description} — {reason}")
+            };
+            let _ = self.memory.log_command("PENDING", &desc);
+
+            let entry = self
+                .pending_confirmations
+                .entry(phone)
+                .or_insert_with(|| PendingSet {
+                    actions: Vec::new(),
+                    created: Instant::now(),
+                });
+            entry.created = Instant::now();
+            entry.actions.push(PendingAction {
+                tool_name: name.to_string(),
+                input,
+                description: desc,
+            });
+
+            let items = entry
+                .actions
+                .iter()
+                .map(|a| format!("• {}", a.description))
+                .collect::<Vec<_>>()
+                .join("\n");
+            self.deferred_question = Some(strings::wa_confirm_request(&self.lang, &items));
+        }
+
+        ContentBlock::ToolResult {
+            tool_use_id: tool_use_id.to_string(),
+            content: "NOT EXECUTED — this action requires explicit user confirmation. \
+                      The user has been asked to confirm. Do not retry or work around it."
+                .to_string(),
+            is_error: false,
+        }
+    }
+
     fn prompt_confirmation(&self) -> bool {
-        if self.auto_confirm {
+        if self.confirm_mode == ConfirmMode::AutoApprove {
             return true;
         }
 
@@ -399,5 +605,45 @@ impl Agent {
 
         let input = input.trim().to_lowercase();
         input == "y" || input == "yes"
+    }
+}
+
+/// Does a (trimmed, lowercased) WhatsApp reply approve the pending action?
+fn is_affirmative(reply: &str) -> bool {
+    matches!(
+        reply,
+        "yes" | "y" | "ok" | "okay" | "네" | "예" | "응" | "확인" | "승인" | "실행" | "좋아" | "ㅇㅋ"
+    )
+}
+
+/// Does a (trimmed, lowercased) WhatsApp reply reject the pending action?
+fn is_negative(reply: &str) -> bool {
+    matches!(
+        reply,
+        "no" | "n" | "cancel" | "stop" | "아니" | "아니요" | "아니오" | "취소" | "중지"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_affirmative_replies() {
+        for r in ["yes", "y", "네", "예", "확인", "승인", "ok"] {
+            assert!(is_affirmative(r), "{r:?} should approve");
+        }
+        for r in ["no", "아니요", "install firefox", ""] {
+            assert!(!is_affirmative(r), "{r:?} must not approve");
+        }
+    }
+
+    #[test]
+    fn test_negative_replies() {
+        for r in ["no", "n", "아니요", "취소", "cancel"] {
+            assert!(is_negative(r), "{r:?} should cancel");
+        }
+        assert!(!is_negative("yes"));
+        assert!(!is_negative("what?"));
     }
 }

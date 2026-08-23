@@ -300,10 +300,20 @@ end
 function build_iso()
     println("\n── Building ISO with mkarchiso ──")
 
-    mkdirs = [WORK_DIR, OUT_DIR]
-    for d in mkdirs
+    # mkarchiso is resumable: it drops a sentinel file per completed stage in
+    # the work dir and skips those stages on the next run. A leftover work dir
+    # therefore makes it skip *everything* — including ISO creation — and exit
+    # 0 having built nothing. Always start from a clean work dir.
+    if isdir(WORK_DIR) && !isempty(readdir(WORK_DIR))
+        println("  Clearing stale work dir: $WORK_DIR")
+        run(`sudo rm -rf $WORK_DIR`)
+    end
+
+    for d in [WORK_DIR, OUT_DIR]
         mkpath(d)
     end
+
+    started_at = time()
 
     cmd = `sudo mkarchiso -v -w $WORK_DIR -o $OUT_DIR $PROFILE`
     println("  Running: $cmd")
@@ -311,11 +321,24 @@ function build_iso()
     println("  Output dir: $OUT_DIR")
     run(cmd)
 
-    # Find the generated ISO
-    isos = filter(f -> endswith(f, ".iso"), readdir(OUT_DIR))
-    if !isempty(isos)
-        println("\n  ✓ ISO created: $(joinpath(OUT_DIR, isos[end]))")
+    # Only count ISOs this run actually produced — listing whatever happens to
+    # sit in OUT_DIR would report a leftover ISO from an earlier build as a
+    # success and hide a failure like the one above.
+    fresh = filter(readdir(OUT_DIR)) do f
+        endswith(f, ".iso") && mtime(joinpath(OUT_DIR, f)) >= started_at
     end
+
+    if isempty(fresh)
+        error("""
+              mkarchiso exited successfully but produced no ISO in $OUT_DIR.
+              This usually means a stale work dir made it skip every stage.
+              Remove it and retry:  sudo rm -rf $WORK_DIR
+              """)
+    end
+
+    iso_path = joinpath(OUT_DIR, first(sort(fresh)))
+    size_gb = round(filesize(iso_path) / 1024^3, digits = 2)
+    println("\n  ✓ ISO created: $iso_path ($(size_gb) GB)")
 end
 
 # ---------------------------------------------------------------------------

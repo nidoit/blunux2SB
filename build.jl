@@ -632,10 +632,14 @@ function generate_live_session()
 
     # The home directory ships in the ISO (see below) — tmpfiles only has to
     # take ownership, since the squashfs is built as root.
+    # One recursive entry, not a plain `z` on the home plus a `Z` on a
+    # subdirectory: the first line would hand /home/liveuser to liveuser while
+    # .config was still root-owned, and systemd-tmpfiles refuses to descend
+    # across that ownership change ("unsafe path transition") — it is how it
+    # guards against symlink attacks.
     write(a("etc/tmpfiles.d/blunux-live.conf"), """
         # blunux2 live session home
-        z /home/liveuser 0755 liveuser liveuser - -
-        Z /home/liveuser/.config 0755 liveuser liveuser - -
+        Z /home/liveuser 0755 liveuser liveuser - -
         """)
 
     # sysusers creates the account with a locked password, which would block

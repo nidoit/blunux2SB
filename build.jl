@@ -44,29 +44,51 @@ const AUR_REPO_DIR  = get(ENV, "BLUNUX_AURREPO", joinpath(ROOT, "aurrepo"))
 const AUR_BUILD_DIR = joinpath(AUR_REPO_DIR, "build")
 
 """
-    build_aur_repo(aur_pkgs) -> Vector{String}
+    build_aur_repo(aur_pkgs; required) -> Vector{String}
 
 Build each AUR package into a local pacman repository so mkarchiso can
 install it into the ISO, and return the names that are actually available.
 
+This runs before anything else in the build: the ISO cannot contain what has
+not been built yet.
+
 The point is offline installs: Calamares is not in the official repos, and
 fetching it from the AUR at live-boot time makes a network connection a hard
-requirement for installing at all. Baking it into the ISO removes that.
+requirement for installing at all. Baking it into the ISO removes that, and
+the same goes for the Korean input method.
 
-Packages already present in the repo are not rebuilt. A package that fails
-to build is reported and dropped from the returned list rather than aborting
-the ISO — a missing input method should not cost you the whole image.
+Packages already present in the repo are not rebuilt — Calamares alone is a
+~20 minute build. Anything in `required` that cannot be provided aborts the
+build; shipping an image whose installer or input method silently went
+missing is worse than not shipping one.
 """
-function build_aur_repo(aur_pkgs::Vector{String})
+function build_aur_repo(aur_pkgs::Vector{String}; required::Vector{String} = String[])
     isempty(aur_pkgs) && return String[]
 
     println("\n── Building AUR packages into local repo ──")
+    if !isempty(required)
+        println("  Required in the ISO: $(join(required, ", "))")
+    end
+
+    function bail(reason)
+        needed = intersect(required, aur_pkgs)
+        isempty(needed) && return
+        error("""
+              $reason
+              These must be in the ISO: $(join(needed, ", "))
+              Without them the image has no installer and/or no input method.
+              Build on a normal user account with base-devel installed, or
+              pass --skip-aur to build an ISO that fetches them at run time.
+              """)
+    end
 
     if Sys.which("makepkg") === nothing
+        bail("makepkg not found (install base-devel).")
         println("  ⚠  makepkg not found (install base-devel) — skipping AUR repo")
         return String[]
     end
     if Sys.isunix() && parse(Int, readchomp(`id -u`)) == 0
+        bail("Running as root; makepkg refuses to run as root.")
         println("  ⚠  running as root — makepkg refuses to run as root, skipping AUR repo")
         return String[]
     end
@@ -117,8 +139,27 @@ function build_aur_repo(aur_pkgs::Vector{String})
             push!(available, pkg)
         catch e
             println("  ✗ $pkg failed to build: $(sprint(showerror, e))")
-            println("     The ISO will still build; this package just won't be in it.")
+            # Drop the checkout: a half-finished or empty clone would make the
+            # next run fail in `git pull` instead of retrying the build.
+            rm(src; recursive = true, force = true)
+            if pkg in required
+                println("     $pkg is required — the build will stop below.")
+            else
+                println("     The ISO will still build; this package just won't be in it.")
+            end
         end
+    end
+
+    # Stop before the ISO is assembled if something essential is missing.
+    missing_required = setdiff(intersect(required, aur_pkgs), available)
+    if !isempty(missing_required)
+        error("""
+              Could not build: $(join(missing_required, ", "))
+              These must be in the ISO — see the build errors above.
+              Fix the package (or pass --skip-aur to build without it, which
+              means the installer and input method are fetched over the
+              network at run time instead).
+              """)
     end
 
     if isempty(available)
@@ -294,7 +335,13 @@ function generate_packages(cfg::Dict; skip_aur::Bool = false)
     # Build the AUR packages into the local repo, then list only the ones
     # that actually made it — naming a package pacstrap can't resolve fails
     # the whole ISO build.
-    available_aur = skip_aur ? String[] : build_aur_repo(unique(aur))
+    #
+    # Calamares and the configured input method are the reason this repo
+    # exists: without them in the image there is no offline install and no
+    # Hangul input, so treat them as build failures rather than warnings.
+    required_aur = intersect(unique(aur), ["calamares", "kime"])
+    available_aur = skip_aur ? String[] :
+                    build_aur_repo(unique(aur); required = required_aur)
     missing_aur = setdiff(unique(aur), available_aur)
 
     # Write packages.x86_64

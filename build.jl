@@ -66,8 +66,10 @@ function generate_packages(cfg::Dict)
     # Filesystem
     append!(pkgs, ["dosfstools", "ntfs-3g", "e2fsprogs"])
 
-    # Network
-    append!(pkgs, ["networkmanager", "iwd", "openssh"])
+    # Network. plasma-nm is what puts the Wi-Fi picker in the system tray —
+    # without it the live session has NetworkManager running but no way to
+    # join a network without a terminal, and the installer needs the network.
+    append!(pkgs, ["networkmanager", "plasma-nm", "iwd", "openssh", "curl"])
 
     # Display & audio
     append!(pkgs, [
@@ -92,6 +94,8 @@ function generate_packages(cfg::Dict)
         append!(pkgs, [
             "plasma-desktop", "plasma-workspace", "sddm",
             "kde-applications-meta", "xdg-desktop-portal-kde",
+            # kdialog drives the live session's graphical prompts
+            "kdialog",
         ])
     end
 
@@ -311,7 +315,7 @@ function generate_live_session()
         Name[ko]=Blunux 설치
         Comment=Install Blunux to this computer
         Comment[ko]=이 컴퓨터에 Blunux를 설치합니다
-        Exec=calamares-blunux
+        Exec=blunux-install-gate
         Icon=system-software-install
         Terminal=false
         X-GNOME-Autostart-enabled=true
@@ -326,22 +330,35 @@ function generate_live_session()
         Name[ko]=Blunux 설치
         Comment=Install Blunux to this computer
         Comment[ko]=이 컴퓨터에 Blunux를 설치합니다
-        Exec=calamares-blunux
+        Exec=blunux-install-gate
         Icon=system-software-install
         Terminal=false
         Categories=System;
         """)
 
-    # Enable the live-user unit the way systemd would (mkarchiso ships the
-    # airootfs as-is; there is no systemctl run against it).
+    # Enable units the way systemd would (mkarchiso ships the airootfs as-is;
+    # there is no systemctl run against it). NetworkManager matters here: it
+    # is installed but nothing enabled it, so the live session came up with no
+    # networking at all — and the installer is fetched over the network.
     wants = a("etc/systemd/system/multi-user.target.wants")
     mkpath(wants)
-    link = joinpath(wants, "blunux-live-user.service")
-    islink(link) || symlink("/etc/systemd/system/blunux-live-user.service", link)
+    for (unit, target) in [
+        ("blunux-live-user.service", "/etc/systemd/system/blunux-live-user.service"),
+        ("NetworkManager.service",   "/usr/lib/systemd/system/NetworkManager.service"),
+    ]
+        link = joinpath(wants, unit)
+        islink(link) || symlink(target, link)
+    end
+
+    # NetworkManager's D-Bus activation name.
+    dbus_alias = a("etc/systemd/system/dbus-org.freedesktop.NetworkManager.service")
+    islink(dbus_alias) ||
+        symlink("/usr/lib/systemd/system/NetworkManager.service", dbus_alias)
 
     println("  liveuser + autologin on tty1")
+    println("  NetworkManager enabled (plasma-nm provides the Wi-Fi picker)")
     println("  startblunux from shell profile → Plasma")
-    println("  Calamares autostarts in the desktop session")
+    println("  blunux-install-gate autostarts: network → setup → installer")
 end
 
 # ---------------------------------------------------------------------------
@@ -414,7 +431,7 @@ function build_rust(cfg::Dict)
 
     # Copy shell scripts
     scriptsdir = joinpath(ROOT, "scripts")
-    for script in ["startblunux", "calamares-blunux"]
+    for script in ["startblunux", "calamares-blunux", "blunux-install-gate"]
         src = joinpath(scriptsdir, script)
         dst = joinpath(bindir, script)
         if isfile(src)

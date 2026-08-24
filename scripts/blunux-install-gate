@@ -1,0 +1,165 @@
+#!/bin/bash
+# /usr/bin/blunux-install-gate — network gate in front of the installer
+#
+# Autostarted in the live Plasma session. Flow:
+#   1. Require a working internet connection (LAN or Wi-Fi)
+#   2. Run blunux-setup, which fetches Calamares and the input method from AUR
+#   3. Launch the installer
+#
+# Step 2 is why the gate exists: the installer is not shipped inside the ISO,
+# so with no connection the user would reach a desktop with no way to install
+# and no explanation. Everything here is graphical — the live session is
+# meant to be usable without touching a terminal.
+
+set -uo pipefail
+
+CONFIG_FILE="/usr/share/blunux/config.toml"
+LOG_TAG="blunux-install-gate"
+
+log() { echo "$*" | systemd-cat -t "$LOG_TAG"; echo "$*" >&2; }
+
+# ── Language ────────────────────────────────────────────────────────────────
+# Follow config.toml's locale so the dialogs match the rest of the session.
+LANG_CODE="en"
+if [[ -f "$CONFIG_FILE" ]] && grep -qE '^\s*language\s*=.*"ko' "$CONFIG_FILE"; then
+    LANG_CODE="ko"
+fi
+[[ "${LANG:-}" == ko* ]] && LANG_CODE="ko"
+
+msg() {
+    local key="$1"
+    case "$LANG_CODE:$key" in
+        ko:title)     echo "Blunux 설치" ;;
+        en:title)     echo "Install Blunux" ;;
+        ko:offline)   echo "설치를 시작하려면 인터넷 연결이 필요합니다.\n\n유선(LAN)을 연결하거나 Wi-Fi를 선택해 주세요.\n설치 프로그램과 한글 입력기를 내려받아야 합니다." ;;
+        en:offline)   echo "An internet connection is required to start the installation.\n\nPlug in a network cable or connect to Wi-Fi.\nThe installer and input method are downloaded during setup." ;;
+        ko:opennet)   echo "네트워크 설정 열기" ;;
+        en:opennet)   echo "Open network settings" ;;
+        ko:retry)     echo "다시 확인" ;;
+        en:retry)     echo "Check again" ;;
+        ko:waiting)   echo "네트워크 연결을 기다리는 중..." ;;
+        en:waiting)   echo "Waiting for a network connection..." ;;
+        ko:online)    echo "인터넷에 연결되었습니다. 설치를 준비합니다..." ;;
+        en:online)    echo "Connected. Preparing the installer..." ;;
+        ko:preparing) echo "설치 프로그램을 내려받는 중입니다. 잠시만 기다려 주세요..." ;;
+        en:preparing) echo "Downloading the installer, please wait..." ;;
+        ko:setupfail) echo "설치 프로그램 준비에 실패했습니다.\n\n인터넷 연결을 확인한 뒤 메뉴에서 'Blunux 설치'를 다시 실행해 주세요." ;;
+        en:setupfail) echo "Could not prepare the installer.\n\nCheck your connection, then run 'Install Blunux' from the menu again." ;;
+        *)            echo "$key" ;;
+    esac
+}
+
+# ── Dialog helpers (kdialog in Plasma, zenity as fallback) ──────────────────
+have() { command -v "$1" &>/dev/null; }
+
+# Returns 0 if the user chose the primary action, 1 otherwise.
+ask_connect() {
+    local text; text="$(msg offline)"
+    if have kdialog; then
+        kdialog --title "$(msg title)" \
+                --yes-label "$(msg opennet)" --no-label "$(msg retry)" \
+                --warningyesno "${text//\\n/$'\n'}"
+    elif have zenity; then
+        zenity --question --title="$(msg title)" \
+               --ok-label="$(msg opennet)" --cancel-label="$(msg retry)" \
+               --text="${text//\\n/$'\n'}"
+    else
+        log "$(msg offline)"
+        sleep 10
+        return 1
+    fi
+}
+
+notify() {
+    local text="$1"
+    if have kdialog; then
+        kdialog --title "$(msg title)" --passivepopup "${text//\\n/$'\n'}" 6 &
+    elif have notify-send; then
+        notify-send "$(msg title)" "${text//\\n/$'\n'}" &
+    fi
+    log "$text"
+}
+
+error_box() {
+    local text="$1"
+    if have kdialog; then
+        kdialog --title "$(msg title)" --error "${text//\\n/$'\n'}"
+    elif have zenity; then
+        zenity --error --title="$(msg title)" --text="${text//\\n/$'\n'}"
+    fi
+    log "$text"
+}
+
+open_network_settings() {
+    # plasma-nm's KCM first, then the GTK editor, then the tray applet.
+    for cmd in \
+        "kcmshell6 kcm_networkmanagement" \
+        "kcmshell5 kcm_networkmanagement" \
+        "nm-connection-editor" \
+        "plasmawindowed org.kde.plasma.networkmanagement"
+    do
+        # shellcheck disable=SC2086
+        if have ${cmd%% *}; then
+            setsid $cmd &>/dev/null &
+            return 0
+        fi
+    done
+    log "No network settings UI found"
+    return 1
+}
+
+# ── Connectivity check ──────────────────────────────────────────────────────
+# nm-online reflects NetworkManager's own verdict; the HTTP probe catches
+# captive portals and "connected but no route" cases it would report as up.
+is_online() {
+    if have nm-online && ! nm-online -q -t 2 &>/dev/null; then
+        return 1
+    fi
+    if have curl; then
+        curl -sSf --max-time 6 -o /dev/null https://archlinux.org/check_network_status.txt \
+            && return 0
+        curl -sSf --max-time 6 -o /dev/null https://www.google.com/generate_204 \
+            && return 0
+        return 1
+    fi
+    ping -c1 -W3 archlinux.org &>/dev/null
+}
+
+# ── 1. Wait for connectivity ────────────────────────────────────────────────
+log "Checking connectivity..."
+
+if ! is_online; then
+    notify "$(msg waiting)"
+    while ! is_online; do
+        if ask_connect; then
+            open_network_settings
+            # Give the user time to pick a network before asking again.
+            for _ in {1..60}; do
+                sleep 2
+                is_online && break
+            done
+        else
+            sleep 3
+        fi
+    done
+fi
+
+log "Online."
+notify "$(msg online)"
+
+# ── 2. Fetch the installer (AUR: calamares, input method, …) ────────────────
+if ! command -v calamares &>/dev/null; then
+    notify "$(msg preparing)"
+    if ! blunux-setup --live --config "$CONFIG_FILE"; then
+        log "blunux-setup failed"
+    fi
+fi
+
+if ! command -v calamares &>/dev/null; then
+    error_box "$(msg setupfail)"
+    exit 1
+fi
+
+# ── 3. Launch the installer ─────────────────────────────────────────────────
+log "Launching installer."
+exec calamares-blunux

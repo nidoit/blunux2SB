@@ -1,10 +1,15 @@
 #!/bin/bash
 # /usr/bin/startblunux — blunux2 Live Session Entry Point
 #
-# Called by SDDM auto-login or manually. Flow:
+# Run from liveuser's shell profile after tty1 autologin. Flow:
 #   1. blunux-wizard   — hardware detection, locale, keyboard (Rust)
-#   2. blunux-setup    — install AUR packages (calamares, kime, etc.) (Rust)
-#   3. startplasma     — launch desktop
+#   2. startplasma     — launch desktop
+#
+# Fetching AUR packages (Calamares, input method) used to happen here, between
+# the two steps. It needs a network connection a freshly booted machine may not
+# have yet, and a bare TTY is a poor place to ask someone to join Wi-Fi — so it
+# moved to blunux-install-gate, which autostarts inside the desktop session and
+# can put a real network dialog on screen first.
 #
 # No Python or Julia.
 
@@ -22,23 +27,13 @@ echo "blunux2: Config: ${CONFIG_FILE}"
 if command -v blunux-wizard &>/dev/null; then
     echo "blunux2: Running hardware wizard..."
     # wizard detects GPU, applies locale/keyboard, but does NOT exec desktop
-    # (we need to run blunux-setup first)
     blunux-wizard --no-desktop || echo "WARNING: wizard returned non-zero"
 else
     echo "WARNING: blunux-wizard not found, skipping hardware detection"
 fi
 
-# ── Step 2: Install AUR packages (calamares, input method, etc.) ────────────
-if command -v blunux-setup &>/dev/null; then
-    echo "blunux2: Running setup (AUR packages)..."
-    blunux-setup --live --config "${CONFIG_FILE}" || echo "WARNING: blunux-setup returned non-zero"
-elif [[ -x /usr/bin/blunux-setup ]]; then
-    echo "blunux2: Running setup script..."
-    /usr/bin/blunux-setup --live "${CONFIG_FILE}" || echo "WARNING: blunux-setup returned non-zero"
-else
-    echo "WARNING: blunux-setup not found, skipping AUR package installation"
-fi
-
-# ── Step 3: Launch desktop ──────────────────────────────────────────────────
+# ── Step 2: Launch desktop ──────────────────────────────────────────────────
+# blunux-install-gate autostarts in the session: network check → AUR setup →
+# installer.
 echo "blunux2: Launching Plasma Wayland..."
 exec startplasma-wayland

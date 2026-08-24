@@ -9,6 +9,7 @@
 #   julia build.jl                    # Full build
 #   julia build.jl --profile-only     # Generate profile without building ISO
 #   julia build.jl --skip-rust        # Skip cargo build (use existing binaries)
+#   julia build.jl --skip-aur         # Skip building AUR packages (no offline installer)
 
 using TOML
 
@@ -17,6 +18,7 @@ const CONFIG     = joinpath(ROOT, "config.toml")
 const PROFILE    = joinpath(ROOT, "profile")
 const WORK_DIR   = get(ENV, "BLUNUX_WORK", "/tmp/blunux2-work")
 const OUT_DIR    = get(ENV, "BLUNUX_OUT", joinpath(ROOT, "out"))
+const ARCH_NAME  = "x86_64"
 
 # ---------------------------------------------------------------------------
 # Config loading
@@ -34,10 +36,151 @@ function load_config()
 end
 
 # ---------------------------------------------------------------------------
+# AUR → local repository
+# ---------------------------------------------------------------------------
+
+const AUR_REPO_NAME = "blunux2"
+const AUR_REPO_DIR  = get(ENV, "BLUNUX_AURREPO", joinpath(ROOT, "aurrepo"))
+const AUR_BUILD_DIR = joinpath(AUR_REPO_DIR, "build")
+
+"""
+    build_aur_repo(aur_pkgs) -> Vector{String}
+
+Build each AUR package into a local pacman repository so mkarchiso can
+install it into the ISO, and return the names that are actually available.
+
+The point is offline installs: Calamares is not in the official repos, and
+fetching it from the AUR at live-boot time makes a network connection a hard
+requirement for installing at all. Baking it into the ISO removes that.
+
+Packages already present in the repo are not rebuilt. A package that fails
+to build is reported and dropped from the returned list rather than aborting
+the ISO — a missing input method should not cost you the whole image.
+"""
+function build_aur_repo(aur_pkgs::Vector{String})
+    isempty(aur_pkgs) && return String[]
+
+    println("\n── Building AUR packages into local repo ──")
+
+    if Sys.which("makepkg") === nothing
+        println("  ⚠  makepkg not found (install base-devel) — skipping AUR repo")
+        return String[]
+    end
+    if Sys.isunix() && parse(Int, readchomp(`id -u`)) == 0
+        println("  ⚠  running as root — makepkg refuses to run as root, skipping AUR repo")
+        return String[]
+    end
+
+    pkgdir = joinpath(AUR_REPO_DIR, ARCH_NAME)
+    mkpath(pkgdir)
+    mkpath(AUR_BUILD_DIR)
+
+    available = String[]
+
+    for pkg in unique(aur_pkgs)
+        # Already in the repo? Then nothing to do.
+        existing = filter(f -> startswith(f, "$pkg-") && endswith(f, ".pkg.tar.zst"),
+                          readdir(pkgdir))
+        if !isempty(existing)
+            println("  ✓ $pkg (cached)")
+            push!(available, pkg)
+            continue
+        end
+
+        println("  → building $pkg from AUR (this can take a while)")
+        src = joinpath(AUR_BUILD_DIR, pkg)
+        try
+            if isdir(joinpath(src, ".git"))
+                run(pipeline(`git -C $src pull --ff-only`, stdout = devnull))
+            else
+                rm(src; recursive = true, force = true)
+                run(`git clone --depth 1 https://aur.archlinux.org/$pkg.git $src`)
+            end
+
+            # -s installs missing build deps (via sudo pacman), -c cleans up.
+            run(setenv(`makepkg -s --noconfirm --needed --clean`, dir = src))
+
+            # Skip the -debug- split package: makepkg emits one for anything
+            # built with debug symbols and it dwarfs the real package (60 MB
+            # against 5 MB for Calamares) for no use on a live medium.
+            built = filter(readdir(src)) do f
+                endswith(f, ".pkg.tar.zst") && !occursin("-debug-", f)
+            end
+            if isempty(built)
+                println("  ✗ $pkg produced no package")
+                continue
+            end
+            for f in built
+                cp(joinpath(src, f), joinpath(pkgdir, f); force = true)
+            end
+            println("  ✓ $pkg")
+            push!(available, pkg)
+        catch e
+            println("  ✗ $pkg failed to build: $(sprint(showerror, e))")
+            println("     The ISO will still build; this package just won't be in it.")
+        end
+    end
+
+    if isempty(available)
+        println("  No AUR packages available.")
+        return available
+    end
+
+    # Rebuild the repo database from exactly the packages present. repo-add
+    # only adds and updates, so refreshing in place would keep entries for
+    # packages that are no longer on disk and leave pacman chasing files that
+    # do not exist.
+    db = joinpath(pkgdir, "$AUR_REPO_NAME.db.tar.zst")
+    for f in readdir(pkgdir)
+        startswith(f, "$AUR_REPO_NAME.") && rm(joinpath(pkgdir, f); force = true)
+    end
+    pkgfiles = joinpath.(pkgdir,
+                         filter(f -> endswith(f, ".pkg.tar.zst"), readdir(pkgdir)))
+    run(pipeline(`repo-add --quiet --new $db $pkgfiles`, stdout = devnull))
+    println("  Repo database: $db ($(length(pkgfiles)) package(s))")
+
+    enable_custom_repo(pkgdir)
+    return available
+end
+
+"""
+    enable_custom_repo(pkgdir)
+
+Point profile/pacman.conf at the freshly built local repo.
+
+The shipped pacman.conf has the repo commented out and aimed at a remote
+server that need not exist; rewriting it here means the ISO build resolves
+these packages from disk.
+"""
+function enable_custom_repo(pkgdir)
+    conf_path = joinpath(PROFILE, "pacman.conf")
+    conf = read(conf_path, String)
+
+    block = """
+    [$AUR_REPO_NAME]
+    SigLevel = Optional TrustAll
+    Server = file://$pkgdir
+    """
+
+    marker = "# blunux2 custom repository"
+    conf = if occursin(r"^\[blunux2\]"m, conf)
+        # Replace the existing block (its Server path may have moved).
+        replace(conf, r"\[blunux2\][^\[]*"s => block)
+    elseif occursin(marker, conf)
+        replace(conf, r"# blunux2 custom repository\n(#[^\n]*\n)*" => "$marker\n$block")
+    else
+        conf * "\n$marker\n$block"
+    end
+
+    write(conf_path, conf)
+    println("  Enabled [$AUR_REPO_NAME] in profile/pacman.conf")
+end
+
+# ---------------------------------------------------------------------------
 # Package list generation
 # ---------------------------------------------------------------------------
 
-function generate_packages(cfg::Dict)
+function generate_packages(cfg::Dict; skip_aur::Bool = false)
     println("\n── Generating packages.x86_64 ──")
 
     pkgs = String[]   # Official repo packages
@@ -84,8 +227,11 @@ function generate_packages(cfg::Dict)
     # Fonts
     append!(pkgs, ["noto-fonts", "noto-fonts-cjk", "noto-fonts-emoji", "ttf-liberation"])
 
-    # Installer (AUR — must be pre-built into custom repo)
-    append!(aur, ["calamares", "calamares-extensions"])
+    # Installer. Built from the AUR into the local repo (see build_aur_repo)
+    # so the ISO can install with no network at all.
+    # ("calamares-extensions" used to be listed here — no such AUR package
+    # exists, and asking for it aborted the whole package install.)
+    push!(aur, "calamares")
 
     # Desktop environment
     packages = get(cfg, "packages", Dict())
@@ -120,13 +266,17 @@ function generate_packages(cfg::Dict)
     if get(im, "enabled", false)
         engine = get(im, "engine", "kime")
         if engine == "kime"
-            append!(aur, ["kime", "kime-indicator"])
+            # kime-bin ships upstream's prebuilt binary: a source build of
+            # kime pulls in the whole Rust toolchain for no gain here.
+            # (There is no separate "kime-indicator" package — the indicator
+            # is part of kime itself.)
+            push!(aur, "kime-bin")
         elseif engine == "fcitx5"
-            append!(pkgs, ["fcitx5", "fcitx5-gtk", "fcitx5-qt", "fcitx5-configtool"])
-            push!(aur, "fcitx5-hangul")
+            # fcitx5-hangul and ibus-hangul live in [extra], not the AUR.
+            append!(pkgs, ["fcitx5", "fcitx5-gtk", "fcitx5-qt",
+                           "fcitx5-configtool", "fcitx5-hangul"])
         elseif engine == "ibus"
-            push!(pkgs, "ibus")
-            push!(aur, "ibus-hangul")
+            append!(pkgs, ["ibus", "ibus-hangul"])
         end
     end
 
@@ -140,9 +290,11 @@ function generate_packages(cfg::Dict)
     # are not packaged yet. blunux-setup handles configuration at runtime
     # via config.toml instead of distro packages.
 
-    # Check if custom repo is enabled in pacman.conf
-    pacman_conf = read(joinpath(PROFILE, "pacman.conf"), String)
-    custom_repo_enabled = occursin(r"^\[blunux2\]"m, pacman_conf)
+    # Build the AUR packages into the local repo, then list only the ones
+    # that actually made it — naming a package pacstrap can't resolve fails
+    # the whole ISO build.
+    available_aur = skip_aur ? String[] : build_aur_repo(unique(aur))
+    missing_aur = setdiff(unique(aur), available_aur)
 
     # Write packages.x86_64
     pkg_file = joinpath(PROFILE, "packages.x86_64")
@@ -151,27 +303,31 @@ function generate_packages(cfg::Dict)
         for pkg in unique(pkgs)
             println(f, pkg)
         end
-        if custom_repo_enabled
-            println(f, "\n# AUR/custom repo packages")
-            for pkg in unique(aur)
+        if !isempty(available_aur)
+            println(f, "\n# Built from the AUR into the local [$AUR_REPO_NAME] repo")
+            for pkg in available_aur
                 println(f, pkg)
             end
-        else
-            println(f, "\n# AUR/custom repo packages (commented out — enable [blunux2] repo in pacman.conf)")
-            for pkg in unique(aur)
+        end
+        if !isempty(missing_aur)
+            println(f, "\n# Not available — installed at runtime by blunux-setup instead")
+            for pkg in missing_aur
                 println(f, "#$pkg")
             end
         end
     end
 
-    println("  Wrote $(length(unique(pkgs))) official packages")
-    if !isempty(aur)
-        if custom_repo_enabled
-            println("  Wrote $(length(unique(aur))) custom repo packages")
-        else
-            println("  Skipped $(length(unique(aur))) AUR/custom packages (no custom repo)")
-            println("  ⚠  To include them, enable [blunux2] repo in profile/pacman.conf")
+    println("\n  Wrote $(length(unique(pkgs))) official packages")
+    if !isempty(available_aur)
+        println("  Wrote $(length(available_aur)) AUR packages into the ISO " *
+                "($(join(available_aur, ", ")))")
+        if "calamares" in available_aur
+            println("  ✓ Calamares is in the ISO — offline install works")
         end
+    end
+    if !isempty(missing_aur)
+        println("  ⚠  Not in the ISO: $(join(missing_aur, ", "))")
+        println("     These need a network connection at install time.")
     end
 end
 
@@ -573,12 +729,13 @@ function main()
 
     profile_only = "--profile-only" in args
     skip_rust    = "--skip-rust" in args
+    skip_aur     = "--skip-aur" in args
 
     # 1. Load config
     cfg = load_config()
 
     # 2. Generate archiso profile
-    generate_packages(cfg)
+    generate_packages(cfg; skip_aur = skip_aur)
     generate_airootfs(cfg)
 
     # 3. Build Rust binaries

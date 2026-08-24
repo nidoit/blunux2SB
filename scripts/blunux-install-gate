@@ -1,15 +1,17 @@
 #!/bin/bash
 # /usr/bin/blunux-install-gate — network gate in front of the installer
 #
-# Autostarted in the live Plasma session. Flow:
-#   1. Require a working internet connection (LAN or Wi-Fi)
-#   2. Run blunux-setup, which fetches Calamares and the input method from AUR
-#   3. Launch the installer
+# Autostarted in the live Plasma session.
 #
-# Step 2 is why the gate exists: the installer is not shipped inside the ISO,
-# so with no connection the user would reach a desktop with no way to install
-# and no explanation. Everything here is graphical — the live session is
-# meant to be usable without touching a terminal.
+# Calamares is normally built into the ISO, so the common path is simply to
+# launch it — installing works with no network at all. The network gate only
+# applies when the installer is missing (an ISO built with --skip-aur, or an
+# AUR build that failed): then a connection genuinely is required to fetch it,
+# and the user gets a dialog offering to open the network settings rather than
+# a desktop with no installer and no explanation.
+#
+# Everything here is graphical — the live session is meant to be usable
+# without touching a terminal.
 
 set -uo pipefail
 
@@ -125,41 +127,43 @@ is_online() {
     ping -c1 -W3 archlinux.org &>/dev/null
 }
 
-# ── 1. Wait for connectivity ────────────────────────────────────────────────
-log "Checking connectivity..."
+# ── 1. Is the installer already here? ───────────────────────────────────────
+# Calamares is built into the ISO from the local repo, so the normal case is
+# that it is already installed and the install can run with no network at all.
+# Only gate on connectivity when something actually has to be downloaded.
+if command -v calamares &>/dev/null; then
+    log "Calamares present — offline install available."
+else
+    log "Calamares missing — a connection is needed to fetch it."
 
-if ! is_online; then
-    notify "$(msg waiting)"
-    while ! is_online; do
-        if ask_connect; then
-            open_network_settings
-            # Give the user time to pick a network before asking again.
-            for _ in {1..60}; do
-                sleep 2
-                is_online && break
-            done
-        else
-            sleep 3
-        fi
-    done
-fi
+    if ! is_online; then
+        notify "$(msg waiting)"
+        while ! is_online; do
+            if ask_connect; then
+                open_network_settings
+                # Give the user time to pick a network before asking again.
+                for _ in {1..60}; do
+                    sleep 2
+                    is_online && break
+                done
+            else
+                sleep 3
+            fi
+        done
+    fi
 
-log "Online."
-notify "$(msg online)"
-
-# ── 2. Fetch the installer (AUR: calamares, input method, …) ────────────────
-if ! command -v calamares &>/dev/null; then
+    log "Online."
     notify "$(msg preparing)"
     if ! blunux-setup --live --config "$CONFIG_FILE"; then
         log "blunux-setup failed"
     fi
+
+    if ! command -v calamares &>/dev/null; then
+        error_box "$(msg setupfail)"
+        exit 1
+    fi
 fi
 
-if ! command -v calamares &>/dev/null; then
-    error_box "$(msg setupfail)"
-    exit 1
-fi
-
-# ── 3. Launch the installer ─────────────────────────────────────────────────
+# ── 2. Launch the installer ─────────────────────────────────────────────────
 log "Launching installer."
 exec calamares-blunux

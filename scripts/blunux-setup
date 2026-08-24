@@ -98,7 +98,9 @@ fi
 # ── 2. Calamares (live mode) ───────────────────────────────────────────────
 if $LIVE; then
     echo "── Installing Calamares (live ISO) ──"
-    yay -S --noconfirm --needed calamares calamares-extensions
+    # calamares-extensions is not a real package; asking for it aborts the
+    # whole transaction. Normally calamares is already in the ISO.
+    yay -S --noconfirm --needed calamares
     ok "calamares"
 fi
 

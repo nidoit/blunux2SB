@@ -150,11 +150,13 @@ airootfs_image_tool_options=(
     '-b' '1M'
 )
 file_permissions=(
-    ["/etc/shadow"]="0:0:400"
     ["/usr/bin/startblunux"]="0:0:755"
     ["/usr/bin/blunux-wizard"]="0:0:755"
     ["/usr/bin/calamares-blunux"]="0:0:755"
     ["/usr/bin/blunux-toml2cal"]="0:0:755"
+    ["/usr/bin/blunux-setup"]="0:0:755"
+    ["/usr/bin/blunux-install-gate"]="0:0:755"
+    ["/etc/sudoers.d/blunux-live"]="0:0:440"   # sudo requires 0440
 )
 ```
 
@@ -315,7 +317,8 @@ Runs at live session startup after the wizard. Handles AUR packages and system c
 
 **Flow:**
 1. **Bootstrap yay** — if not present, clones `yay-bin` from AUR and builds via `makepkg`
-2. **Live mode (`--live`)** — installs `calamares` and `calamares-extensions` via yay
+2. **Live mode (`--live`)** — installs `calamares` via yay, only if it is not
+   already in the image (it normally is; see the local AUR repo in build.jl)
 3. **Install user packages** — resolves `config.toml [packages.*]` booleans to package names, installs via yay
 4. **Input method setup** — based on `config.toml [input_method]`:
    - **kime**: installs `kime`, writes `~/.config/kime/config.yaml` (dubeolsik layout), writes `~/.config/autostart/kime.desktop`, writes `/etc/environment.d/input-method.conf`

@@ -91,7 +91,7 @@ fn ensure_yay() -> Result<()> {
 
 fn step_install_calamares() -> Result<()> {
     println!("\n── Installing Calamares (live ISO) ──");
-    yay_install(&["calamares", "calamares-extensions"])
+    yay_install(&["calamares"])
 }
 
 fn step_install_packages(config: &BlunuxConfig) -> Result<()> {

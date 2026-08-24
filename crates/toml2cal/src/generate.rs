@@ -349,7 +349,8 @@ pub fn shellprocess_conf(config: &BlunuxConfig) -> String {
     // Input method setup
     if config.input_method.enabled {
         let im_pkgs = match config.input_method.engine.as_str() {
-            "kime" => "kime kime-indicator",
+            // kime ships its own indicator; there is no kime-indicator package.
+            "kime" => "kime",
             "fcitx5" => "fcitx5 fcitx5-hangul fcitx5-gtk fcitx5-qt fcitx5-configtool",
             "ibus" => "ibus ibus-hangul",
             _ => "",

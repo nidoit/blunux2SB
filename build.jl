@@ -266,11 +266,12 @@ function generate_packages(cfg::Dict; skip_aur::Bool = false)
     if get(im, "enabled", false)
         engine = get(im, "engine", "kime")
         if engine == "kime"
-            # kime-bin ships upstream's prebuilt binary: a source build of
-            # kime pulls in the whole Rust toolchain for no gain here.
+            # Build kime from source, not kime-bin: kime-bin is pinned to an
+            # older release that no longer compiles against current Qt, while
+            # kime itself tracks upstream.
             # (There is no separate "kime-indicator" package — the indicator
             # is part of kime itself.)
-            push!(aur, "kime-bin")
+            push!(aur, "kime")
         elseif engine == "fcitx5"
             # fcitx5-hangul and ibus-hangul live in [extra], not the AUR.
             append!(pkgs, ["fcitx5", "fcitx5-gtk", "fcitx5-qt",

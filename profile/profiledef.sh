@@ -19,9 +19,12 @@ airootfs_image_tool_options=(
     '-b' '1M'
 )
 file_permissions=(
-    ["/etc/shadow"]="0:0:400"
     ["/usr/bin/startblunux"]="0:0:755"
     ["/usr/bin/blunux-wizard"]="0:0:755"
     ["/usr/bin/calamares-blunux"]="0:0:755"
     ["/usr/bin/blunux-toml2cal"]="0:0:755"
+    ["/usr/bin/blunux-setup"]="0:0:755"
+    # sudo ignores (and complains about) a sudoers file that is group- or
+    # world-writable, so this mode is mandatory, not cosmetic.
+    ["/etc/sudoers.d/blunux-live"]="0:0:440"
 )

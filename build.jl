@@ -210,6 +210,138 @@ function generate_airootfs(cfg::Dict)
 
     println("  Generated hostname, locale.conf, vconsole.conf, mkinitcpio hooks")
     println("  Copied config.toml into airootfs")
+
+    generate_live_session()
+end
+
+"""
+    generate_live_session()
+
+Wire up the unattended live session: boot → desktop → installer, with no
+login prompt and no terminal.
+
+Without this the ISO boots to a getty login prompt, because nothing creates
+a live user, nothing enables autologin, and nothing launches the installer
+once the desktop is up. `startblunux` documents that it is "called by SDDM
+auto-login", but that autologin never existed.
+
+The session runs as an unprivileged `liveuser` rather than root: Plasma
+refuses to run as root, and toml2cal already expects /home/liveuser when it
+copies the live theme onto the installed system.
+"""
+function generate_live_session()
+    println("\n── Generating live session (autologin → installer) ──")
+
+    a(p) = joinpath(PROFILE, "airootfs", p)
+    for dir in [
+        "etc/sysusers.d", "etc/tmpfiles.d", "etc/sudoers.d",
+        "etc/systemd/system/getty@tty1.service.d",
+        "etc/systemd/system",
+        "home/liveuser/.config/autostart",
+    ]
+        mkpath(a(dir))
+    end
+
+    # Live user, created at boot by systemd-sysusers. Declaring it this way
+    # avoids shipping an /etc/passwd that would clobber the system users
+    # pacstrap created (sddm, polkitd, …).
+    write(a("etc/sysusers.d/blunux-live.conf"), """
+        # blunux2 live session user
+        u liveuser 1000 "Blunux Live" /home/liveuser /bin/bash
+        m liveuser wheel
+        """)
+
+    # The home directory ships in the ISO (see below) — tmpfiles only has to
+    # take ownership, since the squashfs is built as root.
+    write(a("etc/tmpfiles.d/blunux-live.conf"), """
+        # blunux2 live session home
+        z /home/liveuser 0755 liveuser liveuser - -
+        Z /home/liveuser/.config 0755 liveuser liveuser - -
+        """)
+
+    # sysusers creates the account with a locked password, which would block
+    # autologin. Clear it before any login happens.
+    write(a("etc/systemd/system/blunux-live-user.service"), """
+        [Unit]
+        Description=Prepare blunux live user
+        After=systemd-sysusers.service systemd-tmpfiles-setup.service
+        Before=getty@tty1.service display-manager.service
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/usr/bin/passwd -d liveuser
+        ExecStart=/usr/bin/chown -R liveuser:liveuser /home/liveuser
+
+        [Install]
+        WantedBy=multi-user.target
+        """)
+
+    # The installer and blunux-setup both need root; a live medium has no
+    # password to type, so grant it outright.
+    write(a("etc/sudoers.d/blunux-live"), "liveuser ALL=(ALL:ALL) NOPASSWD: ALL\n")
+
+    # Autologin on tty1. liveuser's shell profile takes it from here.
+    write(a("etc/systemd/system/getty@tty1.service.d/autologin.conf"), """
+        [Service]
+        ExecStart=
+        ExecStart=-/usr/bin/agetty --noreset --noclear --autologin liveuser - \${TERM}
+        """)
+
+    # Shell profile: start the graphical live session on tty1 only, so a
+    # second console stays usable for troubleshooting. The /run/archiso guard
+    # matters because this file is inside the squashfs that gets unpacked onto
+    # the installed system — without it, logging into the installed machine on
+    # tty1 would re-run the live setup.
+    write(a("home/liveuser/.bash_profile"), """
+        # blunux2 live session
+        if [[ -d /run/archiso && -z \${DISPLAY:-} && -z \${WAYLAND_DISPLAY:-} \\
+              && \$(tty) == /dev/tty1 ]]; then
+            exec startblunux
+        fi
+        """)
+
+    # Once Plasma is up, open the installer automatically. It is an ordinary
+    # window — closing it leaves a usable live desktop. Kept in liveuser's home
+    # rather than /etc/skel so users created by the installer don't inherit it.
+    write(a("home/liveuser/.config/autostart/blunux-installer.desktop"), """
+        [Desktop Entry]
+        Type=Application
+        Name=Install Blunux
+        Name[ko]=Blunux 설치
+        Comment=Install Blunux to this computer
+        Comment[ko]=이 컴퓨터에 Blunux를 설치합니다
+        Exec=calamares-blunux
+        Icon=system-software-install
+        Terminal=false
+        X-GNOME-Autostart-enabled=true
+        """)
+
+    # Also leave a launcher in the menu/desktop for a second run.
+    mkpath(a("usr/share/applications"))
+    write(a("usr/share/applications/blunux-installer.desktop"), """
+        [Desktop Entry]
+        Type=Application
+        Name=Install Blunux
+        Name[ko]=Blunux 설치
+        Comment=Install Blunux to this computer
+        Comment[ko]=이 컴퓨터에 Blunux를 설치합니다
+        Exec=calamares-blunux
+        Icon=system-software-install
+        Terminal=false
+        Categories=System;
+        """)
+
+    # Enable the live-user unit the way systemd would (mkarchiso ships the
+    # airootfs as-is; there is no systemctl run against it).
+    wants = a("etc/systemd/system/multi-user.target.wants")
+    mkpath(wants)
+    link = joinpath(wants, "blunux-live-user.service")
+    islink(link) || symlink("/etc/systemd/system/blunux-live-user.service", link)
+
+    println("  liveuser + autologin on tty1")
+    println("  startblunux from shell profile → Plasma")
+    println("  Calamares autostarts in the desktop session")
 end
 
 # ---------------------------------------------------------------------------

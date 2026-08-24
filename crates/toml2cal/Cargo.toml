@@ -13,3 +13,6 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 anyhow = "1"
+
+[dev-dependencies]
+toml = "0.8"

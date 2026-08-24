@@ -420,6 +420,177 @@ function generate_airootfs(cfg::Dict)
     println("  Copied config.toml into airootfs")
 
     generate_live_session()
+    generate_branding(cfg)
+end
+
+# ---------------------------------------------------------------------------
+# Branding — logo, KDE launcher icon, Calamares theme
+# ---------------------------------------------------------------------------
+
+const LOGO_SRC   = joinpath(ROOT, "branding", "logo.jpeg")
+const BRAND_NAVY = "#162F53"   # the logo's own ink colour
+const ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256]
+
+"""
+    make_round_logo(size, dest)
+
+Render the logo as a navy disc with the penguin knocked out in white.
+
+The source is a dark drawing on near-white paper. Reusing it as-is would
+give a white disc, which vanishes on a light panel, and dropping the
+background instead leaves dark strokes that vanish on a dark one. Inverting
+to light-on-navy is the one variant that stays legible either way — and the
+disc is the brand colour rather than paper.
+"""
+function make_round_logo(size::Int, dest::AbstractString)
+    mkpath(dirname(dest))
+    mktempdir() do tmp
+        square = joinpath(tmp, "square.png")
+        alpha  = joinpath(tmp, "alpha.png")
+        mask   = joinpath(tmp, "mask.png")
+        ink    = joinpath(tmp, "ink.png")
+
+        # Square-crop to the shorter side, keeping the centre.
+        run(`magick $LOGO_SRC -gravity center -crop 796x796+0+0 +repage
+             -resize $(size)x$(size)! $square`)
+
+        # Darkness of the drawing becomes the coverage of the white ink.
+        run(`magick $square -colorspace gray -negate -auto-level $alpha`)
+
+        # Panel-sized icons land on strokes barely a pixel wide, which break
+        # up into grey speckle. Thicken them slightly so the shape survives;
+        # larger sizes are already crisp and would only smudge.
+        if size <= 24
+            run(`magick $alpha -morphology Dilate Disk:0.6 -auto-level $alpha`)
+        end
+
+        run(`magick -size $(size)x$(size) xc:white $alpha
+             -alpha off -compose copy_opacity -composite $ink`)
+
+        r = size ÷ 2
+        run(`magick -size $(size)x$(size) xc:black -fill white
+             -draw "circle $r,$r $r,0" -alpha off $mask`)
+
+        run(`magick -size $(size)x$(size) xc:$BRAND_NAVY $ink -compose over -composite
+             $mask -alpha off -compose copy_opacity -composite $dest`)
+    end
+end
+
+"""
+    generate_branding(cfg)
+
+Put the logo where Plasma and Calamares will actually pick it up.
+
+The launcher icon goes through a `blunux` icon theme that inherits Breeze
+rather than into hicolor: hicolor is only the last-resort fallback, so a
+`start-here-kde` dropped there loses to the one Breeze already ships and
+nothing changes on screen.
+"""
+function generate_branding(cfg::Dict)
+    if !isfile(LOGO_SRC)
+        println("\n── Branding: no branding/logo.jpeg, skipping ──")
+        return
+    end
+    if Sys.which("magick") === nothing
+        println("\n── Branding: ImageMagick not found, skipping ──")
+        println("   Install imagemagick to render the logo into the ISO.")
+        return
+    end
+
+    println("\n── Generating branding from branding/logo.jpeg ──")
+    a(p) = joinpath(PROFILE, "airootfs", p)
+
+    # ── KDE launcher icon, as an icon theme that overrides Breeze ───────────
+    theme = a("usr/share/icons/blunux")
+    dirs = String[]
+    for sz in ICON_SIZES
+        push!(dirs, "$(sz)x$(sz)/apps")
+        icon = joinpath(theme, "$(sz)x$(sz)/apps/start-here-kde.png")
+        make_round_logo(sz, icon)
+        # Plasma versions and themes disagree on which name the launcher
+        # uses; ship every plausible one pointing at the same image.
+        for alias in ["start-here.png", "start-here-symbolic.png",
+                      "start-here-kde-symbolic.png", "distributor-logo.png",
+                      "blunux.png"]
+            cp(icon, joinpath(theme, "$(sz)x$(sz)/apps", alias); force = true)
+        end
+    end
+
+    dir_entries = join(map(d -> """
+        [$d]
+        Size=$(split(d, "x")[1])
+        Context=Applications
+        Type=Fixed
+        """, dirs), "\n")
+
+    write(joinpath(theme, "index.theme"), """
+        [Icon Theme]
+        Name=Blunux
+        Comment=Blunux launcher branding over Breeze
+        Inherits=breeze,hicolor
+        Directories=$(join(dirs, ","))
+
+        $dir_entries
+        """)
+
+    # Make it the default for every user, including ones the installer
+    # creates later. /etc/xdg is read by KDE before a user's own config.
+    mkpath(a("etc/xdg"))
+    write(a("etc/xdg/kdeglobals"), """
+        [Icons]
+        Theme=blunux
+        """)
+
+    println("  Icon theme: /usr/share/icons/blunux (start-here-kde + aliases)")
+
+    # ── Calamares branding ─────────────────────────────────────────────────
+    brand = a("usr/share/calamares/branding/blunux")
+    make_round_logo(256, joinpath(brand, "logo.png"))
+    make_round_logo(512, joinpath(brand, "welcome.png"))
+
+    meta = get(cfg, "blunux", Dict())
+    version = string(get(meta, "version", "2.0"))
+
+    write(joinpath(brand, "branding.desc"), """
+        ---
+        componentName:  blunux
+
+        welcomeStyleCalamares:   false
+        welcomeExpandingLogo:    true
+
+        windowExpanding:    normal
+        windowSize:         800px,520px
+        windowPlacement:    center
+
+        sidebar:    widget
+        navigation: widget
+
+        strings:
+            productName:         Blunux
+            shortProductName:    Blunux
+            version:             $version
+            shortVersion:        $version
+            versionedName:       Blunux $version
+            shortVersionedName:  Blunux $version
+            bootloaderEntryName: Blunux
+            productUrl:          https://blunux.com
+            supportUrl:          https://blunux.com
+            knownIssuesUrl:      https://blunux.com
+            releaseNotesUrl:     https://blunux.com
+
+        images:
+            productIcon:    "logo.png"
+            productLogo:    "logo.png"
+            productWelcome: "welcome.png"
+
+        style:
+           SidebarBackground:        "$BRAND_NAVY"
+           SidebarText:              "#FFFFFF"
+           SidebarTextCurrent:       "$BRAND_NAVY"
+           SidebarBackgroundCurrent: "#FFFFFF"
+        """)
+
+    println("  Calamares branding: /usr/share/calamares/branding/blunux")
 end
 
 """

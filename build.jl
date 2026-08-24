@@ -339,6 +339,74 @@ function build_iso()
     iso_path = joinpath(OUT_DIR, first(sort(fresh)))
     size_gb = round(filesize(iso_path) / 1024^3, digits = 2)
     println("\n  ✓ ISO created: $iso_path ($(size_gb) GB)")
+
+    verify_boot_label(iso_path)
+end
+
+"""
+    verify_boot_label(iso_path)
+
+Confirm the boot configs inside the ISO search for the label the ISO
+actually carries.
+
+The boot configs use mkarchiso's `%ARCHISO_LABEL%` placeholder, which is
+substituted with `iso_label` from profiledef.sh. Writing a prefix in front
+of the placeholder (`archisolabel=BLUNUX2_%ARCHISO_LABEL%` when iso_label
+is already `BLUNUX2_YYYYMM`) produces a doubled prefix, and the resulting
+ISO boots to "device did not show up" because initramfs looks for a label
+that does not exist. Nothing about the ISO looks wrong until you try to
+boot it, so check it here.
+"""
+function verify_boot_label(iso_path)
+    print("  Verifying boot label ... ")
+
+    actual = try
+        strip(read(`blkid -o value -s LABEL $iso_path`, String))
+    catch
+        println("skipped (blkid unavailable)")
+        return
+    end
+
+    tmp = mktempdir()
+    try
+        cfg = joinpath(tmp, "syslinux.cfg")
+        try
+            run(pipeline(
+                `xorriso -osirrox on -indev $iso_path
+                         -extract /boot/syslinux/syslinux.cfg $cfg`,
+                stdout = devnull, stderr = devnull,
+            ))
+        catch
+            println("skipped (could not extract boot config)")
+            return
+        end
+
+        wanted = unique([m.captures[1] for m in
+                         eachmatch(r"archisolabel=(\S+)", read(cfg, String))])
+
+        if isempty(wanted)
+            println("skipped (no archisolabel in boot config)")
+            return
+        end
+
+        bad = filter(!=(actual), wanted)
+        if !isempty(bad)
+            error("""
+                  Boot config label does not match the ISO volume label.
+                  ISO volume label : $actual
+                  Boot config wants: $(join(bad, ", "))
+                  This ISO will fail to boot ("device did not show up").
+                  Check archisolabel= in profile/syslinux/syslinux.cfg,
+                  profile/efiboot/loader/entries/*.conf and profile/grub/grub.cfg —
+                  use a bare %ARCHISO_LABEL% with no prefix of its own, since
+                  iso_label in profiledef.sh already carries one.
+                  """)
+        end
+
+        println("ok ($actual)")
+    finally
+        rm(tmp; recursive = true, force = true)
+    end
 end
 
 # ---------------------------------------------------------------------------

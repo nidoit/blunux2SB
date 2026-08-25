@@ -542,9 +542,18 @@ function generate_airootfs(cfg::Dict)
     # hostname
     write(joinpath(PROFILE, "airootfs/etc/hostname"), get(install, "hostname", "blunux") * "\n")
 
-    # locale.conf
+    # locale.conf + locale.gen
+    #
+    # glibc ships /etc/locale.gen with every entry commented out, so setting
+    # LANG to a locale nobody generated leaves the session on plain "C" —
+    # Calamares said as much ("Detected locale C ... which is not UTF-8").
+    # List it here; blunux-locale.service generates it during boot.
     lang = get(locale, "language", ["en_US"])[1]
     write(joinpath(PROFILE, "airootfs/etc/locale.conf"), "LANG=$(lang).UTF-8\n")
+
+    langs = unique([get(locale, "language", ["en_US"])...; "en_US"])
+    write(joinpath(PROFILE, "airootfs/etc/locale.gen"),
+          join(["$(l).UTF-8 UTF-8" for l in langs], "\n") * "\n")
 
     # vconsole.conf
     #
@@ -734,6 +743,11 @@ function generate_branding(cfg::Dict)
             productLogo:    "logo.png"
             productWelcome: "welcome.png"
 
+        # Required, not optional: Calamares aborts at startup with
+        # "key not found: slideshow" when this is missing.
+        slideshow:    "show.qml"
+        slideshowAPI: 2
+
         style:
            SidebarBackground:        "$BRAND_NAVY"
            SidebarText:              "#FFFFFF"
@@ -741,7 +755,71 @@ function generate_branding(cfg::Dict)
            SidebarBackgroundCurrent: "#FFFFFF"
         """)
 
-    println("  Calamares branding: /usr/share/calamares/branding/blunux")
+    # Shown while packages are copied. Deliberately plain: a slideshow that
+    # fails to load takes the installer down with it, and this one runs on
+    # hardware we cannot test first.
+    write(joinpath(brand, "show.qml"), """
+        import QtQuick 2.0;
+        import calamares.slideshow 1.0;
+
+        Presentation
+        {
+            id: presentation
+
+            Timer {
+                interval: 8000
+                running: presentation.activatedInCalamares
+                repeat: true
+                onTriggered: presentation.goToNextSlide()
+            }
+
+            Slide {
+                Image {
+                    id: logo
+                    source: "logo.png"
+                    width: 160; height: 160
+                    fillMode: Image.PreserveAspectFit
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.verticalCenterOffset: -60
+                }
+                Text {
+                    anchors.top: logo.bottom
+                    anchors.topMargin: 32
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    horizontalAlignment: Text.AlignHCenter
+                    text: "Blunux를 설치하고 있습니다.\\n\\nInstalling Blunux."
+                    font.pointSize: 12
+                    color: "$BRAND_NAVY"
+                }
+            }
+
+            Slide {
+                Text {
+                    anchors.centerIn: parent
+                    horizontalAlignment: Text.AlignHCenter
+                    text: "한글 입력기가 미리 설정되어 있습니다.\\n" +
+                          "설치가 끝나면 바로 한글을 쓸 수 있습니다.\\n\\n" +
+                          "Korean input is preconfigured."
+                    font.pointSize: 12
+                    color: "$BRAND_NAVY"
+                }
+            }
+
+            Slide {
+                Text {
+                    anchors.centerIn: parent
+                    horizontalAlignment: Text.AlignHCenter
+                    text: "Arch Linux 기반이라 언제나 최신 소프트웨어를 씁니다.\\n\\n" +
+                          "Built on Arch Linux — always current software."
+                    font.pointSize: 12
+                    color: "$BRAND_NAVY"
+                }
+            }
+        }
+        """)
+
+    println("  Calamares branding: /usr/share/calamares/branding/blunux (+ slideshow)")
 end
 
 """
@@ -815,6 +893,28 @@ function generate_live_session()
     # password to type, so grant it outright.
     write(a("etc/sudoers.d/blunux-live"), "liveuser ALL=(ALL:ALL) NOPASSWD: ALL\n")
 
+    # Generate the locales listed in /etc/locale.gen. mkarchiso offers no way
+    # to run a command inside the image, and the glibc pacman hook that would
+    # normally do this fires during pacstrap — before our locale.gen is copied
+    # in — so it has to happen on the live system, once, before anything
+    # reads LANG.
+    write(a("etc/systemd/system/blunux-locale.service"), """
+        [Unit]
+        Description=Generate locales for the blunux live session
+        DefaultDependencies=no
+        After=systemd-remount-fs.service
+        Before=getty@tty1.service display-manager.service
+        ConditionPathExists=/etc/locale.gen
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/usr/bin/locale-gen
+
+        [Install]
+        WantedBy=multi-user.target
+        """)
+
     # Autologin on tty1. liveuser's shell profile takes it from here.
     write(a("etc/systemd/system/getty@tty1.service.d/autologin.conf"), """
         [Service]
@@ -883,6 +983,7 @@ function generate_live_session()
     mkpath(wants)
     for (unit, target) in [
         ("blunux-live-user.service", "/etc/systemd/system/blunux-live-user.service"),
+        ("blunux-locale.service",    "/etc/systemd/system/blunux-locale.service"),
         ("NetworkManager.service",   "/usr/lib/systemd/system/NetworkManager.service"),
     ]
         link = joinpath(wants, unit)

@@ -348,7 +348,10 @@ function generate_packages(cfg::Dict; skip_aur::Bool = false)
     # Network. plasma-nm is what puts the Wi-Fi picker in the system tray —
     # without it the live session has NetworkManager running but no way to
     # join a network without a terminal, and the installer needs the network.
-    append!(pkgs, ["networkmanager", "plasma-nm", "iwd", "openssh", "curl"])
+    # No iwd: NetworkManager pulls in wpa_supplicant and uses it by default.
+    # Shipping iwd as well adds a second, unconfigured Wi-Fi backend competing
+    # for the same device.
+    append!(pkgs, ["networkmanager", "plasma-nm", "openssh", "curl"])
 
     # Display & audio
     append!(pkgs, [
@@ -892,6 +895,27 @@ function generate_live_session()
     # The installer and blunux-setup both need root; a live medium has no
     # password to type, so grant it outright.
     write(a("etc/sudoers.d/blunux-live"), "liveuser ALL=(ALL:ALL) NOPASSWD: ALL\n")
+
+    # Same problem one layer up: saving a Wi-Fi connection goes through
+    # polkit, whose NetworkManager actions default to auth_admin. liveuser
+    # has no password, so that prompt can never be satisfied and joining a
+    # network just fails. Allow it for the live session; the installer strips
+    # this file, so an installed machine keeps the normal prompts.
+    mkpath(a("etc/polkit-1/rules.d"))
+    write(a("etc/polkit-1/rules.d/49-blunux-live.rules"), """
+        // blunux2 live session: no password exists to authenticate with.
+        polkit.addRule(function(action, subject) {
+            if (subject.user !== "liveuser") {
+                return polkit.Result.NOT_HANDLED;
+            }
+            if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 ||
+                action.id.indexOf("org.freedesktop.ModemManager") === 0 ||
+                action.id === "org.freedesktop.udisks2.filesystem-mount-system") {
+                return polkit.Result.YES;
+            }
+            return polkit.Result.NOT_HANDLED;
+        });
+        """)
 
     # Generate the locales listed in /etc/locale.gen. mkarchiso offers no way
     # to run a command inside the image, and the glibc pacman hook that would

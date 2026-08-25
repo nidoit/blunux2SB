@@ -44,6 +44,99 @@ const AUR_REPO_DIR  = get(ENV, "BLUNUX_AURREPO", joinpath(ROOT, "aurrepo"))
 const AUR_BUILD_DIR = joinpath(AUR_REPO_DIR, "build")
 
 """
+    check_package_libs(pkgfile)
+
+Warn when a freshly built package links against a shared library that only
+the build machine has.
+
+Calamares shipped needing libpython3.11.so.1.0, picked up from a pyenv
+Python that shadowed the system one. The package installed cleanly and the
+ISO built without complaint — the failure only appeared on the target
+machine, as "error while loading shared libraries", with the installer
+already on screen. Catching it at build time is much cheaper.
+"""
+function check_package_libs(pkgfile)
+    Sys.which("readelf") === nothing && return
+
+    mktempdir() do tmp
+        try
+            run(pipeline(`bsdtar -xf $pkgfile -C $tmp`, stdout = devnull, stderr = devnull))
+        catch
+            return
+        end
+
+        suspects = String[]
+        for (root, _, files) in walkdir(tmp)
+            for f in files
+                path = joinpath(root, f)
+                (islink(path) || !isfile(path)) && continue
+                (endswith(f, ".so") || occursin(".so.", f) ||
+                 startswith(read(`file -b --mime-type $path`, String), "application/x-executable") ||
+                 startswith(read(`file -b --mime-type $path`, String), "application/x-pie")) || continue
+
+                out = try
+                    read(`readelf -d $path`, String)
+                catch
+                    continue
+                end
+                for m in eachmatch(r"Shared library: \[([^\]]+)\]", out)
+                    lib = m.captures[1]
+                    # Present on this machine but not provided by any package
+                    # the ISO will contain: a build-host-only dependency.
+                    if occursin("libpython", lib)
+                        push!(suspects, lib)
+                    end
+                end
+            end
+        end
+
+        unique!(suspects)
+        isempty(suspects) && return
+        sys_python = try
+            strip(read(`/usr/bin/python3 -c "import sys; print(f\"libpython{sys.version_info.major}.{sys.version_info.minor}.so.1.0\")"`, String))
+        catch
+            ""
+        end
+        for lib in suspects
+            if !isempty(sys_python) && lib != sys_python
+                println("     ⚠  links against $lib but the system Python is $sys_python")
+                println("        That library may not exist in the ISO — check PATH for")
+                println("        version-manager shims (pyenv) during the build.")
+            end
+        end
+    end
+end
+
+"""
+    build_env() -> Vector{String}
+
+The environment to run makepkg in: this one, minus version-manager shims.
+
+Those shims hijack `python3`, `ruby`, and friends for the developer's shell.
+Build systems probe for interpreters by running whatever is first on PATH,
+so a pyenv Python became the one Calamares linked against — producing a
+package that needs libpython3.11.so.1.0, a library that exists only on the
+build machine and not in the ISO, so the installer died at startup with
+"error while loading shared libraries".
+
+Toolchain directories that packages genuinely need (~/.cargo/bin for kime)
+are left alone; only the shim layer is removed.
+"""
+function build_env()
+    path = get(ENV, "PATH", "")
+    clean = filter(split(path, ':')) do dir
+        !occursin("pyenv", dir) && !occursin("shims", dir) &&
+            !occursin("rbenv", dir) && !occursin("nodenv", dir)
+    end
+    env = copy(ENV)
+    env["PATH"] = join(clean, ':')
+    # Some build systems consult these instead of PATH.
+    delete!(env, "PYENV_ROOT")
+    delete!(env, "PYENV_VERSION")
+    return [k => v for (k, v) in env]
+end
+
+"""
     build_aur_repo(aur_pkgs; required) -> Vector{String}
 
 Build each AUR package into a local pacman repository so mkarchiso can
@@ -120,7 +213,8 @@ function build_aur_repo(aur_pkgs::Vector{String}; required::Vector{String} = Str
             end
 
             # -s installs missing build deps (via sudo pacman), -c cleans up.
-            run(setenv(`makepkg -s --noconfirm --needed --clean`, dir = src))
+            run(setenv(`makepkg -s --noconfirm --needed --clean`,
+                       dir = src, build_env()))
 
             # Skip the -debug- split package: makepkg emits one for anything
             # built with debug symbols and it dwarfs the real package (60 MB
@@ -134,6 +228,7 @@ function build_aur_repo(aur_pkgs::Vector{String}; required::Vector{String} = Str
             end
             for f in built
                 cp(joinpath(src, f), joinpath(pkgdir, f); force = true)
+                check_package_libs(joinpath(pkgdir, f))
             end
             println("  ✓ $pkg")
             push!(available, pkg)
@@ -276,6 +371,10 @@ function generate_packages(cfg::Dict; skip_aur::Bool = false)
     # ("calamares-extensions" used to be listed here — no such AUR package
     # exists, and asking for it aborted the whole package install.)
     push!(aur, "calamares")
+    # Calamares' own modules are Python, but the AUR package does not declare
+    # python as a dependency — so nothing pulls it in and the installer fails
+    # to start. Ask for it explicitly.
+    push!(pkgs, "python")
 
     # Desktop environment
     packages = get(cfg, "packages", Dict())

@@ -257,7 +257,10 @@ function generate_packages(cfg::Dict; skip_aur::Bool = false)
 
     # Display & audio
     append!(pkgs, [
-        "xorg-server", "xorg-xinit", "wayland", "pipewire",
+        # xorg-xhost lets the installer (which must run as root) reach the
+        # session's display through XWayland; xorg-xwayland provides it.
+        "xorg-server", "xorg-xinit", "xorg-xhost", "xorg-xwayland",
+        "wayland", "pipewire",
         "pipewire-pulse", "wireplumber",
     ])
 
@@ -383,6 +386,45 @@ end
 # Airootfs overlay
 # ---------------------------------------------------------------------------
 
+"""
+    console_keymap(x11_layout) -> String
+
+Translate an X11 keyboard layout into a console keymap that actually exists,
+falling back to "us" when it does not.
+
+Both namespaces use short codes and often agree ("de", "fr"), which is why
+the mismatch is easy to miss — until a layout like "kr" or "us-intl", valid
+in X11 with no VT counterpart, makes systemd-vconsole-setup fail at boot.
+"""
+function console_keymap(layout::AbstractString)
+    # Layouts whose console keymap is spelled differently.
+    aliases = Dict(
+        "se" => "sv-latin1",
+        "dk" => "dk-latin1",
+        "no" => "no-latin1",
+        "fi" => "fi",
+        "de" => "de-latin1",
+        "jp" => "jp106",
+        "gb" => "uk",
+    )
+    candidate = get(aliases, layout, layout)
+
+    kbd_dir = "/usr/share/kbd/keymaps"
+    if isdir(kbd_dir)
+        for (root, _, files) in walkdir(kbd_dir)
+            for f in files
+                # Files look like "us.map.gz" / "sv-latin1.map.gz".
+                first(split(f, '.')) == candidate && return candidate
+            end
+        end
+        return "us"
+    end
+
+    # No keymap tree to check against (unusual build host): trust the alias
+    # table, which only contains names known to exist.
+    return haskey(aliases, layout) ? candidate : "us"
+end
+
 function generate_airootfs(cfg::Dict)
     println("\n── Generating airootfs overlay ──")
 
@@ -406,8 +448,18 @@ function generate_airootfs(cfg::Dict)
     write(joinpath(PROFILE, "airootfs/etc/locale.conf"), "LANG=$(lang).UTF-8\n")
 
     # vconsole.conf
+    #
+    # config.toml's keyboard list holds X11 layouts, which are a different
+    # namespace from console keymaps. "kr" is a valid X11 layout but no such
+    # console keymap exists — Korean keyboards are physically US, and Hangul
+    # input happens in the graphical session, not the VT. Writing KEYMAP=kr
+    # made systemd-vconsole-setup.service fail on every boot.
     kb = get(locale, "keyboard", ["us"])[1]
-    write(joinpath(PROFILE, "airootfs/etc/vconsole.conf"), "KEYMAP=$(kb)\n")
+    keymap = console_keymap(kb)
+    if keymap != kb
+        println("  Console keymap: '$kb' is an X11 layout with no VT keymap → using '$keymap'")
+    end
+    write(joinpath(PROFILE, "airootfs/etc/vconsole.conf"), "KEYMAP=$(keymap)\n")
 
     # mkinitcpio archiso hooks
     write(joinpath(PROFILE, "airootfs/etc/mkinitcpio.conf.d/archiso.conf"),
@@ -700,9 +752,9 @@ function generate_live_session()
         X-GNOME-Autostart-enabled=true
         """)
 
-    # Also leave a launcher in the menu/desktop for a second run.
-    mkpath(a("usr/share/applications"))
-    write(a("usr/share/applications/blunux-installer.desktop"), """
+    # A launcher in the menu, and one on the desktop so the installer is
+    # findable if the autostart window is closed — or never appeared.
+    launcher = """
         [Desktop Entry]
         Type=Application
         Name=Install Blunux
@@ -713,7 +765,16 @@ function generate_live_session()
         Icon=system-software-install
         Terminal=false
         Categories=System;
-        """)
+        """
+    mkpath(a("usr/share/applications"))
+    write(a("usr/share/applications/blunux-installer.desktop"), launcher)
+
+    mkpath(a("home/liveuser/Desktop"))
+    desktop_icon = a("home/liveuser/Desktop/blunux-installer.desktop")
+    write(desktop_icon, launcher)
+    # Plasma ignores a desktop file it does not consider trusted; the
+    # executable bit is what marks it as such.
+    chmod(desktop_icon, 0o755)
 
     # Enable units the way systemd would (mkarchiso ships the airootfs as-is;
     # there is no systemctl run against it). NetworkManager matters here: it

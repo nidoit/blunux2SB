@@ -2,9 +2,11 @@
 # /usr/bin/calamares-blunux — blunux2 Installer Wrapper
 #
 # This script:
-#   1. Reads config.toml (user's install configuration)
-#   2. Runs blunux-toml2cal (Rust) to generate Calamares YAML configs
-#   3. Launches Calamares with the generated configs
+#   1. Re-runs itself as root (Calamares partitions disks and refuses to run
+#      unprivileged — upstream's .desktop launches it via `pkexec calamares`)
+#   2. Reads config.toml (user's install configuration)
+#   3. Runs blunux-toml2cal (Rust) to generate Calamares YAML configs
+#   4. Launches Calamares with the generated configs
 #
 # The user never edits Calamares YAML — config.toml is the single source of truth.
 
@@ -14,6 +16,23 @@ BLUNUX_SHARE="/usr/share/blunux"
 CONFIG_FILE="${BLUNUX_SHARE}/config.toml"
 CAL_MODULES="/etc/calamares/modules"
 CAL_SETTINGS="/etc/calamares/settings.conf"
+
+# ── Become root ─────────────────────────────────────────────────────────────
+# On the live medium liveuser has passwordless sudo, so this does not prompt.
+# pkexec is deliberately avoided: its policy is auth_admin and the live user
+# has no password, so that dialog cannot be satisfied — it just sits there.
+if [[ $EUID -ne 0 ]]; then
+    # Calamares is a Qt app. In a Plasma Wayland session it has to go through
+    # XWayland: a root process cannot use liveuser's Wayland socket, but it
+    # can reach the X server once xhost lets it in.
+    if [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v xhost &>/dev/null; then
+        xhost +si:localuser:root >/dev/null 2>&1 || true
+        export QT_QPA_PLATFORM=xcb
+    fi
+
+    exec sudo --preserve-env=DISPLAY,XAUTHORITY,XDG_RUNTIME_DIR,QT_QPA_PLATFORM,LANG,LC_ALL \
+        "$0" "$@"
+fi
 
 echo "blunux2 Installer: Starting..."
 
@@ -31,6 +50,10 @@ if ! command -v blunux-toml2cal &>/dev/null; then
 fi
 
 # Step 1: Translate config.toml → Calamares YAML
+# The calamares package ships no /etc/calamares at all, so create it rather
+# than letting the translator die on a missing directory.
+mkdir -p "${CAL_MODULES}"
+
 echo "Translating config.toml → Calamares YAML..."
 blunux-toml2cal generate \
     --input "${CONFIG_FILE}" \

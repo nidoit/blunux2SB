@@ -351,7 +351,14 @@ function generate_packages(cfg::Dict; skip_aur::Bool = false)
     # No iwd: NetworkManager pulls in wpa_supplicant and uses it by default.
     # Shipping iwd as well adds a second, unconfigured Wi-Fi backend competing
     # for the same device.
-    append!(pkgs, ["networkmanager", "plasma-nm", "openssh", "curl"])
+    #
+    # wireless-regdb is not a dependency of anything else here, and without
+    # /usr/lib/firmware/regulatory.db the kernel falls back to the world
+    # domain "00", which marks most 5 GHz channels no-IR: the card can hear
+    # beacons but is not allowed to transmit, so scanning lists the network
+    # and association then fails. iw comes along to inspect that when it does.
+    append!(pkgs, ["networkmanager", "plasma-nm", "wireless-regdb", "iw",
+                   "openssh", "curl"])
 
     # Display & audio
     append!(pkgs, [
@@ -374,10 +381,12 @@ function generate_packages(cfg::Dict; skip_aur::Bool = false)
     # ("calamares-extensions" used to be listed here — no such AUR package
     # exists, and asking for it aborted the whole package install.)
     push!(aur, "calamares")
-    # Calamares' own modules are Python, but the AUR package does not declare
-    # python as a dependency — so nothing pulls it in and the installer fails
-    # to start. Ask for it explicitly.
-    push!(pkgs, "python")
+    # Calamares shells out to these and declares none of them, so nothing
+    # pulls them into the image and the install fails partway through:
+    #   python          — its modules are written in Python
+    #   squashfs-tools  — unpackfs runs unsquashfs to read airootfs.sfs
+    #   rsync           — unpackfs runs rsync to do the actual copy
+    append!(pkgs, ["python", "squashfs-tools", "rsync"])
 
     # Desktop environment
     packages = get(cfg, "packages", Dict())
@@ -467,6 +476,14 @@ function generate_packages(cfg::Dict; skip_aur::Bool = false)
             for pkg in missing_aur
                 println(f, "#$pkg")
             end
+        end
+    end
+
+    # Calamares needs these at install time and declares none of them; each
+    # omission only surfaced as a failed install on real hardware.
+    for tool in ["python", "squashfs-tools", "rsync"]
+        if !(tool in pkgs)
+            error("$tool must be in the ISO — Calamares needs it to install.")
         end
     end
 

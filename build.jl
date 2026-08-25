@@ -506,6 +506,32 @@ end
 # ---------------------------------------------------------------------------
 
 """
+    regulatory_country(timezone) -> Union{String,Nothing}
+
+The ISO 3166 country for a timezone, read from tzdata's zone.tab.
+
+Used to pin the wireless regulatory domain. Deriving it from the data
+tzdata already ships beats keeping a hand-written timezone→country table
+that would quietly rot.
+"""
+function regulatory_country(timezone::AbstractString)
+    isempty(timezone) && return nothing
+    tab = "/usr/share/zoneinfo/zone.tab"
+    isfile(tab) || return nothing
+
+    for line in eachline(tab)
+        startswith(line, "#") && continue
+        fields = split(line)
+        length(fields) >= 3 || continue
+        if fields[3] == timezone
+            cc = fields[1]
+            return length(cc) == 2 ? String(cc) : nothing
+        end
+    end
+    return nothing
+end
+
+"""
     console_keymap(x11_layout) -> String
 
 Translate an X11 keyboard layout into a console keymap that actually exists,
@@ -599,7 +625,7 @@ function generate_airootfs(cfg::Dict)
     println("  Generated hostname, locale.conf, vconsole.conf, mkinitcpio hooks")
     println("  Copied config.toml into airootfs")
 
-    generate_live_session()
+    generate_live_session(cfg)
     generate_branding(cfg)
 end
 
@@ -843,7 +869,7 @@ function generate_branding(cfg::Dict)
 end
 
 """
-    generate_live_session()
+    generate_live_session(cfg)
 
 Wire up the unattended live session: boot → desktop → installer, with no
 login prompt and no terminal.
@@ -857,7 +883,7 @@ The session runs as an unprivileged `liveuser` rather than root: Plasma
 refuses to run as root, and toml2cal already expects /home/liveuser when it
 copies the live theme onto the installed system.
 """
-function generate_live_session()
+function generate_live_session(cfg::Dict)
     println("\n── Generating live session (autologin → installer) ──")
 
     a(p) = joinpath(PROFILE, "airootfs", p)
@@ -933,6 +959,33 @@ function generate_live_session()
             return polkit.Result.NOT_HANDLED;
         });
         """)
+
+    # Pin the wireless regulatory domain.
+    #
+    # Without it the kernel stays on world domain "00", where the 5 GHz
+    # channels are marked no-IR: the card may receive but not transmit, so a
+    # network shows up in the scan list and every association attempt dies
+    # ("authenticating -> disconnected", then ssid-not-found). The country
+    # comes from the configured timezone via tzdata's own zone.tab, so there
+    # is no table here to drift out of date.
+    country = regulatory_country(get(get(cfg, "locale", Dict()), "timezone", ""))
+    if country !== nothing
+        write(a("etc/systemd/system/blunux-regdom.service"), """
+            [Unit]
+            Description=Set the wireless regulatory domain for blunux
+            After=NetworkManager.service systemd-udev-settle.service
+            Wants=NetworkManager.service
+
+            [Service]
+            Type=oneshot
+            RemainAfterExit=yes
+            ExecStart=/usr/bin/iw reg set $country
+
+            [Install]
+            WantedBy=multi-user.target
+            """)
+        println("  Regulatory domain: $country (from timezone)")
+    end
 
     # Wi-Fi that connects and immediately drops, over and over, is almost
     # always one of these two defaults on a live medium:
@@ -1048,6 +1101,11 @@ function generate_live_session()
     end
 
     # NetworkManager's D-Bus activation name.
+    if isfile(a("etc/systemd/system/blunux-regdom.service"))
+        link = joinpath(wants, "blunux-regdom.service")
+        islink(link) || symlink("/etc/systemd/system/blunux-regdom.service", link)
+    end
+
     dbus_alias = a("etc/systemd/system/dbus-org.freedesktop.NetworkManager.service")
     islink(dbus_alias) ||
         symlink("/usr/lib/systemd/system/NetworkManager.service", dbus_alias)

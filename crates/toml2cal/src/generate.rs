@@ -333,6 +333,10 @@ pub fn shellprocess_conf(config: &BlunuxConfig) -> String {
     // target, so without this the installed system keeps the passwordless
     // `liveuser` account, its NOPASSWD sudoers drop-in and the tty1 autologin.
     for path in [
+        // Lists the archiso hooks, which the pacman -Rns above just deleted.
+        // Leaving it makes the mkinitcpio -P below fail with exit code 1 at
+        // the very end of an otherwise complete install.
+        "/etc/mkinitcpio.conf.d/archiso.conf",
         "/etc/sudoers.d/blunux-live",
         "/etc/polkit-1/rules.d/49-blunux-live.rules",
         "/etc/sysusers.d/blunux-live.conf",
@@ -516,6 +520,7 @@ mod tests {
     fn shellprocess_strips_the_live_session() {
         let out = shellprocess_conf(&sample_config());
         for needle in [
+            "/etc/mkinitcpio.conf.d/archiso.conf",
             "/etc/sudoers.d/blunux-live",
             "/etc/polkit-1/rules.d/49-blunux-live.rules",
             "/etc/sysusers.d/blunux-live.conf",

@@ -917,6 +917,22 @@ function generate_live_session()
         });
         """)
 
+    # Wi-Fi that connects and immediately drops, over and over, is almost
+    # always one of these two defaults on a live medium:
+    #   - powersave puts the card to sleep between packets, and some chipsets
+    #     never come back cleanly;
+    #   - a randomised MAC changes identity on each scan, so an AP that binds
+    #     the lease (or filters by MAC) keeps tearing the association down.
+    # Neither buys anything on an installer image, so turn both off.
+    mkpath(a("etc/NetworkManager/conf.d"))
+    write(a("etc/NetworkManager/conf.d/blunux-wifi.conf"), """
+        [connection]
+        wifi.powersave = 2
+
+        [device]
+        wifi.scan-rand-mac-address = no
+        """)
+
     # Generate the locales listed in /etc/locale.gen. mkarchiso offers no way
     # to run a command inside the image, and the glibc pacman hook that would
     # normally do this fires during pacstrap — before our locale.gen is copied
